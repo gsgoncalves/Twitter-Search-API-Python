@@ -8,7 +8,10 @@ from urlparse import urlunparse
 from bs4 import BeautifulSoup
 from time import sleep
 
-__author__ = 'Tom Dickinson'
+__author__ = 'Tom Dickinson, Flavio Martins'
+
+
+DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y" # "Fri Mar 29 11:03:41 +0000 2013";
 
 
 class TwitterSearch:
@@ -48,8 +51,8 @@ class TwitterSearch:
 
             # Our max tweet is the last tweet in the list
             max_tweet = tweets[-1]
-            if min_tweet['tweet_id'] is not max_tweet['tweet_id']:
-                max_position = "TWEET-%s-%s" % (max_tweet['tweet_id'], min_tweet['tweet_id'])
+            if min_tweet['id_str'] is not max_tweet['id_str']:
+                max_position = "TWEET-%s-%s" % (max_tweet['id_str'], min_tweet['id_str'])
                 url = self.construct_url(query, max_position=max_position)
                 # Sleep for our rate_delay
                 sleep(self.rate_delay)
@@ -86,7 +89,7 @@ class TwitterSearch:
         :param items_html: The HTML block with tweets
         :return: A JSON list of tweets
         """
-        soup = BeautifulSoup(items_html, "html")
+        soup = BeautifulSoup(items_html, "html5lib")
         tweets = []
         for li in soup.find_all("li", class_='js-stream-item'):
 
@@ -95,14 +98,19 @@ class TwitterSearch:
                 continue
 
             tweet = {
-                'tweet_id': li['data-item-id'],
                 'text': None,
-                'user_id': None,
-                'user_screen_name': None,
-                'user_name': None,
+                'id_str': li['data-item-id'],
+                'id': long(li['data-item-id']),
+                'epoch': None,
                 'created_at': None,
-                'retweets': 0,
-                'favorites': 0
+                'retweet_count': 0,
+                'favorite_count': 0,
+                'user': {
+                    'id': None,
+                    'id_str': None,
+                    'screen_name': None,
+                    'name': None,
+                },
             }
 
             # Tweet Text
@@ -113,24 +121,32 @@ class TwitterSearch:
             # Tweet User ID, User Screen Name, User Name
             user_details_div = li.find("div", class_="tweet")
             if user_details_div is not None:
-                tweet['user_id'] = user_details_div['data-user-id']
-                tweet['user_screen_name'] = user_details_div['data-user-id']
-                tweet['user_name'] = user_details_div['data-name']
+                tweet['user']['id_str'] = user_details_div['data-user-id']
+                tweet['user']['id'] = long(user_details_div['data-user-id'])
+                tweet['user']['screen_name'] = user_details_div['data-screen-name']
+                tweet['user']['name'] = user_details_div['data-name']
 
             # Tweet date
             date_span = li.find("span", class_="_timestamp")
             if date_span is not None:
-                tweet['created_at'] = float(date_span['data-time-ms'])
+                tweet['epoch'] = int(date_span['data-time'])
+
+
+            if tweet['epoch'] is not None:
+                t = datetime.datetime.fromtimestamp((tweet['epoch']))
+                tweet['created_at'] = t.strftime(DATE_FORMAT)
 
             # Tweet Retweets
             retweet_span = li.select("span.ProfileTweet-action--retweet > span.ProfileTweet-actionCount")
             if retweet_span is not None and len(retweet_span) > 0:
-                tweet['retweets'] = int(retweet_span[0]['data-tweet-stat-count'])
+                tweet['retweet_count'] = int(retweet_span[0]['data-tweet-stat-count'])
+                tweet['retweeted'] = tweet['retweet_count'] > 0
 
             # Tweet Favourites
             favorite_span = li.select("span.ProfileTweet-action--favorite > span.ProfileTweet-actionCount")
-            if favorite_span is not None and len(retweet_span) > 0:
-                tweet['favorites'] = int(favorite_span[0]['data-tweet-stat-count'])
+            if favorite_span is not None and len(favorite_span) > 0:
+                tweet['favorite_count'] = int(favorite_span[0]['data-tweet-stat-count'])
+                tweet['favorited'] = tweet['favorite_count'] > 0
 
             tweets.append(tweet)
         return tweets
@@ -187,10 +203,7 @@ class TwitterSearchImpl(TwitterSearch):
             # Lets add a counter so we only collect a max number of tweets
             self.counter += 1
 
-            if tweet['created_at'] is not None:
-                t = datetime.datetime.fromtimestamp((tweet['created_at']/1000))
-                fmt = "%Y-%m-%d %H:%M:%S"
-                print "%i [%s] - %s" % (self.counter, t.strftime(fmt), tweet['text'])
+            print json.dumps(tweet)
 
             # When we've reached our max limit, return False so collection stops
             if self.counter >= self.max_tweets:
@@ -200,5 +213,5 @@ class TwitterSearchImpl(TwitterSearch):
 
 
 if __name__ == '__main__':
-    twit = TwitterSearchImpl(0, 5, 5000)
-    twit.search("Babylon 5")
+    twit = TwitterSearchImpl(0, 5, 50000)
+    twit.search("from:reuters since:2013-02-01 until:2013-02-02")
