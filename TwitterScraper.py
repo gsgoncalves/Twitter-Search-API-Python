@@ -1,4 +1,7 @@
-import urllib2
+import sys
+import argparse
+import io
+import requests
 import json
 import datetime
 from abc import ABCMeta
@@ -12,6 +15,9 @@ __author__ = 'Tom Dickinson, Flavio Martins'
 
 
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y" # "Fri Mar 29 11:03:41 +0000 2013";
+HEADERS = {
+            'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.86 Safari/537.36'
+        }
 
 
 class TwitterSearch:
@@ -26,6 +32,10 @@ class TwitterSearch:
         self.rate_delay = rate_delay
         self.error_delay = error_delay
 
+        self.session = requests.Session()
+        # Specify a user agent to prevent Twitter from returning a profile card
+        self.session.headers.update(HEADERS)
+
     def search(self, query):
         """
         Scrape items from twitter
@@ -35,6 +45,7 @@ class TwitterSearch:
         url = self.construct_url(query)
         continue_search = True
         min_tweet = None
+
         response = self.execute_search(url)
         while response is not None and continue_search and response['items_html'] is not None:
             tweets = self.parse_tweets(response['items_html'])
@@ -65,13 +76,8 @@ class TwitterSearch:
         :return: A JSON object with data from Twitter
         """
         try:
-            # Specify a user agent to prevent Twitter from returning a profile card
-            headers = {
-                'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.86 Safari/537.36'
-            }
-            req = urllib2.Request(url, headers=headers)
-            response = urllib2.urlopen(req)
-            data = json.loads(response.read())
+            response = self.session.get(url)
+            data = response.json()
             return data
 
         # If we get a ValueError exception due to a request timing out, we sleep for our error delay, then make
@@ -184,7 +190,7 @@ class TwitterSearch:
 
 class TwitterSearchImpl(TwitterSearch):
 
-    def __init__(self, rate_delay, error_delay, max_tweets):
+    def __init__(self, rate_delay, error_delay, max_tweets, filename):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
@@ -193,6 +199,7 @@ class TwitterSearchImpl(TwitterSearch):
         super(TwitterSearchImpl, self).__init__(rate_delay, error_delay)
         self.max_tweets = max_tweets
         self.counter = 0
+        self.jsonl_file = io.open(filename, 'w', encoding='utf8')
 
     def save_tweets(self, tweets):
         """
@@ -203,15 +210,49 @@ class TwitterSearchImpl(TwitterSearch):
             # Lets add a counter so we only collect a max number of tweets
             self.counter += 1
 
-            print json.dumps(tweet)
+            data = json.dumps(tweet, ensure_ascii=False)
+            # unicode(data) auto-decodes data to unicode if str
+            self.jsonl_file.write(unicode(data) + '\n')
+
+            if (self.counter % 100 == 0):
+                print "%i tweets saved" % self.counter
 
             # When we've reached our max limit, return False so collection stops
             if self.counter >= self.max_tweets:
                 return False
 
+        self.jsonl_file.flush()
         return True
 
 
 if __name__ == '__main__':
-    twit = TwitterSearchImpl(0, 5, 50000)
-    twit.search("from:reuters since:2013-02-01 until:2013-02-02")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output_file")
+    parser.add_argument("--search", type=str)
+    parser.add_argument("--account", type=str)
+    parser.add_argument("--since", type=str)
+    parser.add_argument("--until", type=str)
+    parser.add_argument("--rate_delay", type=int, default=0)
+    parser.add_argument("--error_delay", type=int, default=5)
+    parser.add_argument("--max_tweets", type=int, default=50000)
+    args = parser.parse_args()
+
+    twit = TwitterSearchImpl(args.rate_delay, args.error_delay, args.max_tweets, args.output_file)
+
+    search_str = ""
+
+    if args.search:
+        search_str += args.search
+
+
+    if args.account:
+        search_str += " from:" + args.account
+
+    if args.since:
+        search_str += " since:" + args.since
+
+    if args.until:
+        search_str += " until:" + args.until
+
+    print "Search :" + search_str
+    twit.search(search_str)
