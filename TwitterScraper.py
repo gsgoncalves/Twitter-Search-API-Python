@@ -116,6 +116,9 @@ class TwitterSearch:
                     'id_str': None,
                     'screen_name': None,
                     'name': None,
+                    'followers_count': 0,
+                    'friends_count': 0,
+                    'statuses_count': 0,
                 },
             }
 
