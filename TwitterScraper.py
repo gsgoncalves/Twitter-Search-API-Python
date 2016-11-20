@@ -2,19 +2,22 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import print_function, unicode_literals, division
+import io
 import sys
 import argparse
-import io
 import requests
 import json
 import datetime
-import logging
-from abc import ABCMeta
-from urllib import urlencode
-from abc import abstractmethod
-from urlparse import urlunparse
+from os import path
+from abc import ABCMeta, abstractmethod
+try:
+    from urllib.parse import urlunparse, urlencode
+except ImportError:
+    from urllib import urlencode
+    from urlparse import urlunparse
 from bs4 import BeautifulSoup
 from time import sleep
+import logging
 
 __author__ = 'Tom Dickinson, Flavio Martins'
 
@@ -22,27 +25,26 @@ __author__ = 'Tom Dickinson, Flavio Martins'
 logger = logging.getLogger(__name__)
 
 
-DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y" # "Fri Mar 29 11:03:41 +0000 2013";
+PROGRESS_PER = 100
+DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
 HEADERS = {
-            'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.86 Safari/537.36'
-        }
+    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.'
+                  '86 Safari/537.36'
+    }
 
 
 class TwitterSearch:
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, rate_delay, error_delay=5):
+    def __init__(self, session, rate_delay, error_delay=5):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
         """
+        self.session = session
         self.rate_delay = rate_delay
         self.error_delay = error_delay
-
-        self.session = requests.Session()
-        # Specify a user agent to prevent Twitter from returning a profile card
-        self.session.headers.update(HEADERS)
 
     def search(self, query):
         """
@@ -103,7 +105,7 @@ class TwitterSearch:
         :param items_html: The HTML block with tweets
         :return: A JSON list of tweets
         """
-        soup = BeautifulSoup(items_html, "html5lib")
+        soup = BeautifulSoup(items_html, "html.parser")
         tweets = []
         for li in soup.find_all("li", class_='js-stream-item'):
 
@@ -114,7 +116,7 @@ class TwitterSearch:
             tweet = {
                 'text': None,
                 'id_str': li['data-item-id'],
-                'id': long(li['data-item-id']),
+                'id': int(li['data-item-id']),
                 'epoch': None,
                 'created_at': None,
                 'retweet_count': 0,
@@ -136,7 +138,7 @@ class TwitterSearch:
             user_details_div = li.find("div", class_="tweet")
             if user_details_div is not None:
                 tweet['user']['id_str'] = user_details_div['data-user-id']
-                tweet['user']['id'] = long(user_details_div['data-user-id'])
+                tweet['user']['id'] = int(user_details_div['data-user-id'])
                 tweet['user']['screen_name'] = user_details_div['data-screen-name']
                 tweet['user']['name'] = user_details_div['data-name']
 
@@ -144,7 +146,6 @@ class TwitterSearch:
             date_span = li.find("span", class_="_timestamp")
             if date_span is not None:
                 tweet['epoch'] = int(date_span['data-time'])
-
 
             if tweet['epoch'] is not None:
                 t = datetime.datetime.fromtimestamp((tweet['epoch']))
@@ -198,16 +199,22 @@ class TwitterSearch:
 
 class TwitterSearchImpl(TwitterSearch):
 
-    def __init__(self, rate_delay, error_delay, max_tweets, filename):
+    def __init__(self, session, rate_delay, error_delay, max_tweets, filename):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
         :param max_tweets: Maximum number of tweets to collect for this example
         """
-        super(TwitterSearchImpl, self).__init__(rate_delay, error_delay)
+        super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay)
         self.max_tweets = max_tweets
         self.counter = 0
-        self.jsonl_file = io.open(filename, 'w', encoding='utf8')
+        self.filename = filename
+        self.jsonl_file = None
+
+    def search(self, query):
+        self.jsonl_file = io.open(self.filename, 'w', encoding='utf8')
+        super(TwitterSearchImpl, self).search(query)
+        self.jsonl_file.close()
 
     def save_tweets(self, tweets):
         """
@@ -219,43 +226,40 @@ class TwitterSearchImpl(TwitterSearch):
             self.counter += 1
 
             data = json.dumps(tweet, ensure_ascii=False)
-            # unicode(data) auto-decodes data to unicode if str
-            self.jsonl_file.write(unicode(data) + '\n')
+            self.jsonl_file.write(data + '\n')
 
-            if (self.counter % 100 == 0):
+            if self.counter % PROGRESS_PER == 0:
                 logger.info("%i tweets saved", self.counter)
 
             # When we've reached our max limit, return False so collection stops
             if self.counter >= self.max_tweets:
                 return False
 
-        self.jsonl_file.flush()
         return True
 
 
 def main():
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
     parser = argparse.ArgumentParser()
-    parser.add_argument("output_file")
     parser.add_argument("--search", type=str)
-    parser.add_argument("--account", type=str)
+    parser.add_argument('--accounts', nargs='+', required=False)
     parser.add_argument("--since", type=str)
     parser.add_argument("--until", type=str)
     parser.add_argument("--rate_delay", type=int, default=0)
     parser.add_argument("--error_delay", type=int, default=5)
-    parser.add_argument("--max_tweets", type=int, default=50000)
+    parser.add_argument("--limit", type=int, default=50000)
+    parser.add_argument("--output_dir", type=str, default='.')
+    parser.add_argument("--output_file", type=str)
     args = parser.parse_args()
 
-    twit = TwitterSearchImpl(args.rate_delay, args.error_delay, args.max_tweets, args.output_file)
+    session = requests.Session()
+    # Specify a user agent to prevent Twitter from returning a profile card
+    session.headers.update(HEADERS)
 
     search_str = ""
 
     if args.search:
         search_str += args.search
-
-
-    if args.account:
-        search_str += " from:" + args.account
 
     if args.since:
         search_str += " since:" + args.since
@@ -263,8 +267,25 @@ def main():
     if args.until:
         search_str += " until:" + args.until
 
-    logger.info("Search : %s", search_str)
-    twit.search(search_str)
+    if not args.accounts:
+        if not args.search:
+            logger.error("Search is empty")
+            sys.exit(1)
+        elif not args.output_file:
+            logger.error("No output_file specified")
+            sys.exit(1)
+        else:
+            twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
+                                     args.limit, path.join(args.output_dir, args.output_file))
+            logger.info("Search : %s", search_str)
+            twit.search(search_str)
+    else:
+        for act in args.accounts:
+            twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
+                                     args.limit, path.join(args.output_dir, act + '.jsonl'))
+            search_str_from = search_str + " from:" + act
+            logger.info("Search : %s", search_str_from)
+            twit.search(search_str_from)
 
 
 if __name__ == '__main__':
