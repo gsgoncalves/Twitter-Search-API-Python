@@ -287,9 +287,12 @@ def main():
 
         for act in args.accounts:
             filepath = path.join(args.output_dir, act + '.jsonl')
-            if path.isfile(filepath) and path.getsize(filepath) > 0:
-                logger.warn('File already has content: %s', filepath)
-                continue
+            try:
+                if path.getsize(filepath) > 0:
+                    logger.warn('File already has content: %s', filepath)
+                    continue
+            except OSError:
+                pass
 
             twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
                                      args.limit, filepath)
