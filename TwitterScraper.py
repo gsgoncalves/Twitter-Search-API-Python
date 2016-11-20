@@ -1,9 +1,14 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function, unicode_literals, division
 import sys
 import argparse
 import io
 import requests
 import json
 import datetime
+import logging
 from abc import ABCMeta
 from urllib import urlencode
 from abc import abstractmethod
@@ -12,6 +17,9 @@ from bs4 import BeautifulSoup
 from time import sleep
 
 __author__ = 'Tom Dickinson, Flavio Martins'
+
+
+logger = logging.getLogger(__name__)
 
 
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y" # "Fri Mar 29 11:03:41 +0000 2013";
@@ -83,8 +91,8 @@ class TwitterSearch:
         # If we get a ValueError exception due to a request timing out, we sleep for our error delay, then make
         # another attempt
         except ValueError as e:
-            print e.message
-            print "Sleeping for %i" % self.error_delay
+            logger.error(e.message)
+            logger.info("Sleeping for %i", self.error_delay)
             sleep(self.error_delay)
             return self.execute_search(url)
 
@@ -215,7 +223,7 @@ class TwitterSearchImpl(TwitterSearch):
             self.jsonl_file.write(unicode(data) + '\n')
 
             if (self.counter % 100 == 0):
-                print "%i tweets saved" % self.counter
+                logger.info("%i tweets saved", self.counter)
 
             # When we've reached our max limit, return False so collection stops
             if self.counter >= self.max_tweets:
@@ -225,7 +233,8 @@ class TwitterSearchImpl(TwitterSearch):
         return True
 
 
-if __name__ == '__main__':
+def main():
+    logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("output_file")
     parser.add_argument("--search", type=str)
@@ -254,5 +263,9 @@ if __name__ == '__main__':
     if args.until:
         search_str += " until:" + args.until
 
-    print "Search :" + search_str
+    logger.info("Search : %s", search_str)
     twit.search(search_str)
+
+
+if __name__ == '__main__':
+    main()
