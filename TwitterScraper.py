@@ -275,14 +275,20 @@ def main():
             logger.error("No output_file specified")
             sys.exit(1)
         else:
+            filepath = path.join(args.output_dir, args.output_file)
             twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
-                                     args.limit, path.join(args.output_dir, args.output_file))
+                                     args.limit, filepath)
             logger.info("Search : %s", search_str)
             twit.search(search_str)
     else:
         for act in args.accounts:
+            filepath = path.join(args.output_dir, act + '.jsonl')
+            if path.isfile(filepath) and path.getsize(filepath) > 0:
+                logger.error('File already has content: %s', filepath)
+                continue
+
             twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
-                                     args.limit, path.join(args.output_dir, act + '.jsonl'))
+                                     args.limit, filepath)
             search_str_from = search_str + " from:" + act
             logger.info("Search : %s", search_str_from)
             twit.search(search_str_from)
