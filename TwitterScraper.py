@@ -281,10 +281,14 @@ def main():
             logger.info("Search : %s", search_str)
             twit.search(search_str)
     else:
+        if not path.isdir(args.output_dir):
+            logger.error('Output directory does not exist.')
+            sys.exit(1)
+
         for act in args.accounts:
             filepath = path.join(args.output_dir, act + '.jsonl')
             if path.isfile(filepath) and path.getsize(filepath) > 0:
-                logger.error('File already has content: %s', filepath)
+                logger.warn('File already has content: %s', filepath)
                 continue
 
             twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
