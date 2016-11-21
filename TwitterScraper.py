@@ -6,6 +6,7 @@ import io
 import sys
 import argparse
 import requests
+from requests.exceptions import HTTPError
 import json
 import datetime
 from os import path
@@ -87,12 +88,12 @@ class TwitterSearch:
         """
         try:
             response = self.session.get(url)
+            response.raise_for_status()  # raise on any HTTPError
             data = response.json()
             return data
-
-        # If we get a ValueError exception due to a request timing out, we sleep for our error delay, then make
+        # If we get a HTTPError exception due to a request timing out, we sleep for our error delay, then make
         # another attempt
-        except ValueError as e:
+        except HTTPError as e:
             logger.error(e.message)
             logger.info("Sleeping for %i", self.error_delay)
             sleep(self.error_delay)
