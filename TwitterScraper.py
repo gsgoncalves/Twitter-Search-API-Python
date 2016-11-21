@@ -94,10 +94,14 @@ class TwitterSearch:
         # If we get a HTTPError exception due to a request timing out, we sleep for our error delay, then make
         # another attempt
         except HTTPError as e:
-            logger.error(e.message)
-            logger.info("Sleeping for %i", self.error_delay)
-            sleep(self.error_delay)
-            return self.execute_search(url)
+            # 400 Bad Request
+            if e.response.status_code == 400:
+                return data
+            else:
+                logger.error(e.message)
+                logger.info("Sleeping for %i", self.error_delay)
+                sleep(self.error_delay)
+                return self.execute_search(url)
 
     @staticmethod
     def parse_tweets(items_html):
