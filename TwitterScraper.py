@@ -19,6 +19,7 @@ except ImportError:
 from bs4 import BeautifulSoup
 from time import sleep
 import logging
+import random
 
 __author__ = 'Tom Dickinson, Flavio Martins'
 
@@ -28,10 +29,15 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_PER = 100
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
-HEADERS = {
-    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.'
-                  '86 Safari/537.36'
-    }
+UA = ['Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.116 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.103 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.71 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 6.1; rv:28.0) Gecko/20100101 Firefox/28.0',
+      'Mozilla/5.0 (Windows NT 5.1; rv:31.0) Gecko/20100101 Firefox/31.0',
+      'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0',
+      'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:40.0) Gecko/20100101 Firefox/40.0'
+      ]
 
 
 class TwitterSearch:
@@ -204,7 +210,7 @@ class TwitterSearch:
 
 class TwitterSearchImpl(TwitterSearch):
 
-    def __init__(self, session, rate_delay, error_delay, max_tweets, filename):
+    def __init__(self, session, rate_delay, error_delay, max_tweets, filepath):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
@@ -213,11 +219,15 @@ class TwitterSearchImpl(TwitterSearch):
         super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay)
         self.max_tweets = max_tweets
         self.counter = 0
-        self.filename = filename
+        self.filepath = filepath
         self.jsonl_file = None
 
     def search(self, query):
-        self.jsonl_file = io.open(self.filename, 'w', encoding='utf8')
+        # Specify a user agent to prevent Twitter from returning a profile card
+        headers = {'user-agent': random.choice(UA)}
+        self.session.headers.update(headers)
+
+        self.jsonl_file = io.open(self.filepath, 'w', encoding='utf8')
         super(TwitterSearchImpl, self).search(query)
         self.jsonl_file.close()
 
@@ -234,7 +244,7 @@ class TwitterSearchImpl(TwitterSearch):
             self.jsonl_file.write(data + '\n')
 
             if self.counter % PROGRESS_PER == 0:
-                logger.info("%i tweets saved", self.counter)
+                logger.info("%s : %i tweets saved", self.filepath, self.counter)
 
             # When we've reached our max limit, return False so collection stops
             if self.counter >= self.max_tweets:
@@ -258,8 +268,6 @@ def main():
     args = parser.parse_args()
 
     session = requests.Session()
-    # Specify a user agent to prevent Twitter from returning a profile card
-    session.headers.update(HEADERS)
 
     search_str = ""
 
