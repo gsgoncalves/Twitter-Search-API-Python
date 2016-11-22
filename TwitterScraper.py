@@ -244,7 +244,7 @@ class TwitterSearchImpl(TwitterSearch):
             self.jsonl_file.write(data + '\n')
 
             if self.counter % PROGRESS_PER == 0:
-                logger.info("%s : %i tweets saved", self.filepath, self.counter)
+                logger.info("%s : %i tweets saved to file.", self.filepath, self.counter)
 
             # When we've reached our max limit, return False so collection stops
             if self.counter >= self.max_tweets:
@@ -282,7 +282,7 @@ def main():
 
     if not args.accounts:
         if not args.search:
-            logger.error("Search is empty")
+            logger.error("Nothing to search")
             sys.exit(1)
         elif not args.output_file:
             logger.error("No output_file specified")
@@ -302,7 +302,7 @@ def main():
             filepath = path.join(args.output_dir, act + '.jsonl')
             try:
                 if path.getsize(filepath) > 0:
-                    logger.warn('File already has content: %s', filepath)
+                    logger.warn('%s : File already has content.', filepath)
                     continue
             except OSError:
                 pass
