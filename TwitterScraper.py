@@ -302,7 +302,7 @@ def main():
             filepath = path.join(args.output_dir, act + '.jsonl')
             try:
                 if path.getsize(filepath) > 0:
-                    logger.warn('%s : File already has content.', filepath)
+                    logger.debug('%s : File already has content.', filepath)
                     continue
             except OSError:
                 pass
