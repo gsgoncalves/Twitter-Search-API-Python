@@ -227,7 +227,7 @@ class TwitterSearchImpl(TwitterSearch):
         headers = {'user-agent': random.choice(UA)}
         self.session.headers.update(headers)
 
-        self.jsonl_file = io.open(self.filepath, 'w', encoding='utf8')
+        self.jsonl_file = io.open(self.filepath, 'w', encoding='utf-8')
         super(TwitterSearchImpl, self).search(query)
         self.jsonl_file.close()
 
@@ -240,7 +240,7 @@ class TwitterSearchImpl(TwitterSearch):
             # Lets add a counter so we only collect a max number of tweets
             self.counter += 1
 
-            data = json.dumps(tweet, ensure_ascii=False)
+            data = json.dumps(tweet, ensure_ascii=False, encoding='utf-8')
             self.jsonl_file.write(data + '\n')
 
             if self.counter % PROGRESS_PER == 0:
