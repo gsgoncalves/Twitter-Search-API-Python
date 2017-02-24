@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from __future__ import print_function, unicode_literals, division
 import io
 import sys
 import argparse
@@ -12,7 +11,8 @@ import datetime
 from os import path
 from abc import ABCMeta, abstractmethod
 try:
-    from urllib.parse import urlunparse, urlencode
+    from urllib.parse import urlencode
+    from urllib.parse import urlunparse
 except ImportError:
     from urllib import urlencode
     from urlparse import urlunparse
