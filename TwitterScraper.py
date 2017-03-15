@@ -19,7 +19,7 @@ except ImportError:
 from bs4 import BeautifulSoup
 from time import sleep
 import logging
-import random
+from fake_useragent import UserAgent
 
 __author__ = 'Tom Dickinson, Flavio Martins'
 
@@ -29,15 +29,7 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_PER = 100
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
-UA = ['Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.116 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.103 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.71 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 6.1; rv:28.0) Gecko/20100101 Firefox/28.0',
-      'Mozilla/5.0 (Windows NT 5.1; rv:31.0) Gecko/20100101 Firefox/31.0',
-      'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0',
-      'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:40.0) Gecko/20100101 Firefox/40.0'
-      ]
+UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0')
 
 
 class TwitterSearch:
@@ -224,7 +216,7 @@ class TwitterSearchImpl(TwitterSearch):
 
     def search(self, query):
         # Specify a user agent to prevent Twitter from returning a profile card
-        headers = {'user-agent': random.choice(UA)}
+        headers = {'user-agent': UA.random}
         self.session.headers.update(headers)
 
         self.jsonl_file = io.open(self.filepath, 'w', encoding='utf-8')
