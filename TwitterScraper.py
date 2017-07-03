@@ -6,6 +6,7 @@ import sys
 import argparse
 import requests
 from requests.exceptions import HTTPError
+import six
 import json
 import datetime
 from os import path
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 PROGRESS_PER = 100
+DEFAULT_TARGET_TYPE = "tweets"
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
 UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0')
 
@@ -45,38 +47,38 @@ class TwitterSearch:
         self.rate_delay = rate_delay
         self.error_delay = error_delay
 
-    def search(self, query):
+    def search(self, query, target_type):
         """
         Scrape items from twitter
         :param query:   Query to search Twitter with. Takes form of queries constructed with using Twitters
                         advanced search: https://twitter.com/search-advanced
+        :param type:    Can be "tweets" or "users"
         """
-        url = self.construct_url(query)
+        url = self.construct_url(query, target_type=target_type)
         continue_search = True
-        min_tweet = None
+        min_item = None
+
+        # Initialize search function wrapper according to the target type
+        parse_tweets_fn = self.parse_tweets if target_type == DEFAULT_TARGET_TYPE else self.parse_users
 
         response = self.execute_search(url)
         while response is not None and continue_search and response['items_html'] is not None:
-            tweets = self.parse_tweets(response['items_html'])
+            items = parse_tweets_fn(response['items_html'])
 
-            # If we have no tweets, then we can break the loop early
-            if len(tweets) == 0:
+            # If we have no items, then we can break the loop early
+            if len(items) == 0:
                 break
 
-            # If we haven't set our min tweet yet, set it now
-            if min_tweet is None:
-                min_tweet = tweets[0]
+            continue_search = self.save_items(items)
 
-            continue_search = self.save_tweets(tweets)
+            max_item = response["min_position"]
 
-            # Our max tweet is the last tweet in the list
-            max_tweet = tweets[-1]
-            if min_tweet['id_str'] is not max_tweet['id_str']:
-                max_position = "TWEET-%s-%s" % (max_tweet['id_str'], min_tweet['id_str'])
-                url = self.construct_url(query, max_position=max_position)
+            if min_item is not max_item:
+                url = self.construct_url(query, target_type=target_type, max_position=max_item)
                 # Sleep for our rate_delay
                 sleep(self.rate_delay)
                 response = self.execute_search(url)
+                min_item = max_item
 
     def execute_search(self, url):
         """
@@ -85,6 +87,7 @@ class TwitterSearch:
         :return: A JSON object with data from Twitter
         """
         try:
+            logger.info("URL: " + url)
             response = self.session.get(url)
             response.raise_for_status()  # raise on any HTTPError
             data = response.json()
@@ -170,76 +173,115 @@ class TwitterSearch:
         return tweets
 
     @staticmethod
-    def construct_url(query, max_position=None):
+    def parse_users(items_html):
+        """
+        Parses Users from the given HTML
+        :param items_html: The HTML block with items
+        :return: A JSON list of items
+        """
+        soup = BeautifulSoup(items_html, "html.parser")
+        items = []
+        for div in soup.find_all("div", class_='js-stream-item'):
+
+            # If our li doesn't have a tweet-id, we skip it as it's not going to be a tweet.
+            if 'data-item-id' not in div.attrs:
+                continue
+
+            user = {
+                'bio': None,
+                'id_str': div['data-item-id'],
+                'id': int(div['data-item-id']),
+                'screen_name': None,
+                'name': None,
+            }
+
+            # User Bio
+            text_p = div.find("p", class_="ProfileCard-bio")
+            if text_p is not None:
+                user['bio'] = text_p.get_text()
+
+            # Tweet User ID, User Screen Name, User Name
+            user_details_div = div.find("div", class_="user-actions")
+            if user_details_div is not None:
+                # user['user']['id_str'] = user_details_div['data-user-id']
+                # user['user']['id'] = int(user_details_div['data-user-id'])
+                user['screen_name'] = user_details_div['data-screen-name']
+                user['name'] = user_details_div['data-name']
+
+            items.append(user)
+        return items
+
+    @staticmethod
+    def construct_url(query, target_type, max_position=None):
         """
         For a given query, will construct a URL to search Twitter with
         :param query: The query term used to search twitter
-        :param max_position: The max_position value to select the next pagination of tweets
+        :param max_position: The max_position value to select the next pagination of items
         :return: A string URL
         """
-
         params = {
             # Type Param
-            'f': 'tweets',
+            'f': target_type,
             # Query Param
-            'q': query
+            'q': query,
+            'max_position': max_position
         }
-
-        # If our max_position param is not None, we add it to the parameters
-        if max_position is not None:
-            params['max_position'] = max_position
 
         url_tupple = ('https', 'twitter.com', '/i/search/timeline', '', urlencode(params), '')
         return urlunparse(url_tupple)
 
     @abstractmethod
-    def save_tweets(self, tweets):
+    def save_items(self, items):
         """
-        An abstract method that's called with a list of tweets.
-        When implementing this class, you can do whatever you want with these tweets.
+        An abstract method that's called with a list of items.
+        When implementing this class, you can do whatever you want with these items.
         """
 
 
 class TwitterSearchImpl(TwitterSearch):
 
-    def __init__(self, session, rate_delay, error_delay, max_tweets, filepath):
+    def __init__(self, session, rate_delay, error_delay, max_items, filepath):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
-        :param max_tweets: Maximum number of tweets to collect for this example
+        :param max_items: Maximum number of items to collect for this example
         """
         super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay)
-        self.max_tweets = max_tweets
+        self.max_items = max_items
         self.counter = 0
         self.filepath = filepath
         self.jsonl_file = None
 
-    def search(self, query):
+    def search(self, query, target_type):
         # Specify a user agent to prevent Twitter from returning a profile card
         headers = {'user-agent': UA.random}
         self.session.headers.update(headers)
 
         self.jsonl_file = io.open(self.filepath, 'w', encoding='utf-8')
-        super(TwitterSearchImpl, self).search(query)
+        super(TwitterSearchImpl, self).search(query, target_type=target_type)
         self.jsonl_file.close()
 
-    def save_tweets(self, tweets):
+    def save_items(self, items):
         """
-        Just prints out tweets
+        Just prints out items
         :return:
         """
-        for tweet in tweets:
-            # Lets add a counter so we only collect a max number of tweets
+        for item in items:
+            # Lets add a counter so we only collect a max number of items
             self.counter += 1
 
-            data = json.dumps(tweet, ensure_ascii=False, encoding='utf-8')
+            if six.PY2:
+                data = json.dumps(item, ensure_ascii=False, encoding='utf-8')
+            else:
+                data = json.dumps(item, ensure_ascii=False)
+
             self.jsonl_file.write(data + '\n')
 
             if self.counter % PROGRESS_PER == 0:
-                logger.info("%s : %i tweets saved to file.", self.filepath, self.counter)
+                logger.info("%s : %i items saved to file.", self.filepath, self.counter)
 
             # When we've reached our max limit, return False so collection stops
-            if self.counter >= self.max_tweets:
+            if self.counter >= self.max_items:
                 return False
 
         return True
@@ -249,6 +291,7 @@ def main():
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("--search", type=str)
+    parser.add_argument("-f", type=str)
     parser.add_argument('--accounts', nargs='+', required=False)
     parser.add_argument("--since", type=str)
     parser.add_argument("--until", type=str)
@@ -280,11 +323,13 @@ def main():
             logger.error("No output_file specified")
             sys.exit(1)
         else:
+            target_type = DEFAULT_TARGET_TYPE if not args.f else args.f
+
             filepath = path.join(args.output_dir, args.output_file)
             twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
                                      args.limit, filepath)
             logger.info("Search : %s", search_str)
-            twit.search(search_str)
+            twit.search(search_str, target_type=target_type)
     else:
         if not path.isdir(args.output_dir):
             logger.error('Output directory does not exist.')
