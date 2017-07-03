@@ -27,7 +27,9 @@ __author__ = 'Tom Dickinson, Flavio Martins'
 
 logger = logging.getLogger(__name__)
 
-
+DEFAULT_RATE_DELAY = 0
+DEFAULT_ERROR_DELAY = 5
+DEFAULT_LIMIT = 50000
 PROGRESS_PER = 100
 DEFAULT_TARGET_TYPE = "tweets"
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
@@ -287,68 +289,74 @@ class TwitterSearchImpl(TwitterSearch):
         return True
 
 
+def twitter_search(search_terms=None, since=None, until=None, accounts=None, target_type=DEFAULT_TARGET_TYPE,
+                 rate_delay=DEFAULT_RATE_DELAY, error_delay=DEFAULT_ERROR_DELAY, limit=DEFAULT_LIMIT,
+                 output_dir=".", output_file=None):
+        session = requests.Session()
+
+        search_str = ""
+
+        if search_terms:
+            search_str = " ".join(search_terms)
+
+        if since:
+            search_str += " since:" + since
+
+        if until:
+            search_str += " until:" + until
+
+        if not accounts:
+            if not search_terms:
+                logger.error("Nothing to search")
+                sys.exit(1)
+            elif not output_file:
+                logger.error("No output_file specified")
+                sys.exit(1)
+            else:
+                filepath = path.join(output_dir, output_file)
+                twit = TwitterSearchImpl(session, rate_delay, error_delay,
+                                         limit, filepath)
+                logger.info("Search : %s",  search_str)
+                twit.search(search_str, target_type=target_type)
+        else:
+            if not path.isdir(output_dir):
+                logger.error('Output directory does not exist.')
+                sys.exit(1)
+
+            for act in accounts:
+                filepath = path.join(output_dir, act + '.jsonl')
+                try:
+                    if path.getsize(filepath) > 0:
+                        logger.debug('%s : File already has content.', filepath)
+                        continue
+                except OSError:
+                    pass
+
+                twit = TwitterSearchImpl(session, rate_delay, error_delay,
+                                         limit, filepath)
+                search_str_from = search_str + " from:" + act
+                logger.info("Search : %s", search_str_from)
+                twit.search(search_str_from)
+
+
 def main():
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("--search", default=[], nargs='+')
-    parser.add_argument("-f", type=str)
+    parser.add_argument("-f", default=DEFAULT_TARGET_TYPE, type=str)
     parser.add_argument('--accounts', nargs='+', required=False)
     parser.add_argument("--since", type=str)
     parser.add_argument("--until", type=str)
-    parser.add_argument("--rate_delay", type=int, default=0)
-    parser.add_argument("--error_delay", type=int, default=5)
-    parser.add_argument("--limit", type=int, default=50000)
+    parser.add_argument("--rate_delay", type=int, default=DEFAULT_RATE_DELAY)
+    parser.add_argument("--error_delay", type=int, default=DEFAULT_ERROR_DELAY)
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--output_dir", type=str, default='.')
     parser.add_argument("--output_file", type=str)
     args = parser.parse_args()
 
-    session = requests.Session()
-
-    search_str = ""
-
-    if args.search:
-        search_str += args.search
-
-    if args.since:
-        search_str += " since:" + args.since
-
-    if args.until:
-        search_str += " until:" + args.until
-
-    if not args.accounts:
-        if not args.search:
-            logger.error("Nothing to search")
-            sys.exit(1)
-        elif not args.output_file:
-            logger.error("No output_file specified")
-            sys.exit(1)
-        else:
-            target_type = DEFAULT_TARGET_TYPE if not args.f else args.f
-
-            filepath = path.join(args.output_dir, args.output_file)
-            twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
-                                     args.limit, filepath)
-            logger.info("Search : %s", search_str)
-            twit.search(search_str, target_type=target_type)
-    else:
-        if not path.isdir(args.output_dir):
-            logger.error('Output directory does not exist.')
-            sys.exit(1)
-
-        for act in args.accounts:
-            filepath = path.join(args.output_dir, act + '.jsonl')
-            try:
-                if path.getsize(filepath) > 0:
-                    logger.debug('%s : File already has content.', filepath)
-                    continue
-            except OSError:
-                pass
-
-            twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
-                                     args.limit, filepath)
-            search_str_from = search_str + " from:" + act
-            logger.info("Search : %s", search_str_from)
-            twit.search(search_str_from)
+    twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until,
+                   accounts=args.accounts, rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
+                 output_dir=args.output_dir, output_file=args.output_file)
 
 
 if __name__ == '__main__':
