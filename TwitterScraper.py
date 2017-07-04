@@ -27,6 +27,13 @@ __author__ = 'Tom Dickinson, Flavio Martins'
 
 logger = logging.getLogger(__name__)
 
+# Only needed in case user additional details are required
+# If that is the case, the library requires the package python-twitter
+TWITTER_REST_API_CONSUMER_KEY = ""
+TWITTER_REST_API_CONSUMER_SECRET = ""
+TWITTER_REST_API_ACCESS_TOKEN = ""
+TWITTER_REST_API_ACCESS_TOKEN_SECRET = ""
+
 DEFAULT_RATE_DELAY = 0
 DEFAULT_ERROR_DELAY = 5
 DEFAULT_LIMIT = 50000
@@ -49,14 +56,14 @@ class TwitterSearch:
         self.rate_delay = rate_delay
         self.error_delay = error_delay
 
-    def search(self, query, target_type):
+    def search(self, query, target_type, **kwargs):
         """
         Scrape items from twitter
         :param query:   Query to search Twitter with. Takes form of queries constructed with using Twitters
                         advanced search: https://twitter.com/search-advanced
-        :param type:    Can be "tweets" or "users"
+        :param target_type:    Can be "tweets" or "users"
         """
-        url = self.construct_url(query, target_type=target_type)
+        url = self.construct_url(query, target_type=target_type, language=kwargs['language'])
         continue_search = True
         min_item = None
 
@@ -67,6 +74,10 @@ class TwitterSearch:
         while response is not None and continue_search and response['items_html'] is not None:
             items = parse_tweets_fn(response['items_html'])
 
+            # Check if we should collect additional user details
+            if target_type == "users" and kwargs["user_stats"]:
+                self.retrieve_user_details(items)
+
             # If we have no items, then we can break the loop early
             if len(items) == 0:
                 break
@@ -76,7 +87,8 @@ class TwitterSearch:
             max_item = response["min_position"]
 
             if min_item is not max_item:
-                url = self.construct_url(query, target_type=target_type, max_position=max_item)
+                url = self.construct_url(query, target_type=target_type, max_position=max_item,
+                                                    language=kwargs['language'])
                 # Sleep for our rate_delay
                 sleep(self.rate_delay)
                 response = self.execute_search(url)
@@ -205,19 +217,46 @@ class TwitterSearch:
             # Tweet User ID, User Screen Name, User Name
             user_details_div = div.find("div", class_="user-actions")
             if user_details_div is not None:
-                # user['user']['id_str'] = user_details_div['data-user-id']
-                # user['user']['id'] = int(user_details_div['data-user-id'])
                 user['screen_name'] = user_details_div['data-screen-name']
                 user['name'] = user_details_div['data-name']
+
+            user_fields_div = div.find("div", class_="ProfileCard-userFields")
+            user_verified_span = user_fields_div.find("span", class_="Icon--verified")
+            user['verified'] = True if user_verified_span else False
 
             items.append(user)
         return items
 
     @staticmethod
-    def construct_url(query, target_type, max_position=None):
+    def construct_url(query, target_type, max_position=None, language=None):
         """
         For a given query, will construct a URL to search Twitter with
         :param query: The query term used to search twitter
+        :param target_type:    Can be "tweets" or "users"
+        :param max_position: The max_position value to select the next pagination of items
+        :param language: Specifies a language to filter search results
+        :return: A string URL
+        """
+        params = {
+            # Type Param
+            'f': target_type,
+            # Query Param
+            'q': query,
+            'max_position': max_position
+        }
+
+        if language:
+            params['l'] = language
+
+        url_tupple = ('https', 'twitter.com', '/i/search/timeline', '', urlencode(params), '')
+        return urlunparse(url_tupple)
+
+    @staticmethod
+    def construct_user_url(query, target_type, max_position=None):
+        """
+        For a given query, will construct a URL to search Twitter with
+        :param query: The query term used to search twitter
+        :param target_type:    Can be "tweets" or "users"
         :param max_position: The max_position value to select the next pagination of items
         :return: A string URL
         """
@@ -239,6 +278,27 @@ class TwitterSearch:
         When implementing this class, you can do whatever you want with these items.
         """
 
+    def retrieve_user_details(self, items):
+        """
+        For a given set of crawled users, retrieves additional information using the Twitter REST API
+        :param items: A list of user dictionarities
+        :return: An updated list with additional fields of User dictionaries
+        """
+        # The user lookup API limit per request is 100
+        step = 100
+
+        import twitter
+        api = twitter.Api(consumer_key=TWITTER_REST_API_CONSUMER_KEY,
+                          consumer_secret=TWITTER_REST_API_CONSUMER_SECRET,
+                          access_token_key=TWITTER_REST_API_ACCESS_TOKEN,
+                          access_token_secret=TWITTER_REST_API_ACCESS_TOKEN_SECRET)
+
+        for i in range(0, len(items), step):
+            statuses = api.UsersLookup(screen_name=[item["screen_name"] for item in items[i:step]])
+            for j in range(min(len(statuses), step)):
+                items[i + j] = {**items[i+j], **statuses[j].AsDict()}
+
+        return items
 
 class TwitterSearchImpl(TwitterSearch):
 
@@ -254,13 +314,13 @@ class TwitterSearchImpl(TwitterSearch):
         self.filepath = filepath
         self.jsonl_file = None
 
-    def search(self, query, target_type):
+    def search(self, query, target_type, **kwargs):
         # Specify a user agent to prevent Twitter from returning a profile card
         headers = {'user-agent': UA.random}
         self.session.headers.update(headers)
 
         self.jsonl_file = io.open(self.filepath, 'w', encoding='utf-8')
-        super(TwitterSearchImpl, self).search(query, target_type=target_type)
+        super(TwitterSearchImpl, self).search(query, target_type=target_type, **kwargs)
         self.jsonl_file.close()
 
     def save_items(self, items):
@@ -289,8 +349,8 @@ class TwitterSearchImpl(TwitterSearch):
         return True
 
 
-def twitter_search(search_terms=None, since=None, until=None, accounts=None, target_type=DEFAULT_TARGET_TYPE,
-                 rate_delay=DEFAULT_RATE_DELAY, error_delay=DEFAULT_ERROR_DELAY, limit=DEFAULT_LIMIT,
+def twitter_search(search_terms=None, since=None, until=None, language=None, accounts=None, target_type=DEFAULT_TARGET_TYPE,
+                 rate_delay=DEFAULT_RATE_DELAY, error_delay=DEFAULT_ERROR_DELAY, user_stats=False, limit=DEFAULT_LIMIT,
                  output_dir=".", output_file=None):
         session = requests.Session()
 
@@ -317,7 +377,7 @@ def twitter_search(search_terms=None, since=None, until=None, accounts=None, tar
                 twit = TwitterSearchImpl(session, rate_delay, error_delay,
                                          limit, filepath)
                 logger.info("Search : %s",  search_str)
-                twit.search(search_str, target_type=target_type)
+                twit.search(search_str, target_type=target_type, user_stats=user_stats, language=language)
         else:
             if not path.isdir(output_dir):
                 logger.error('Output directory does not exist.')
@@ -336,7 +396,7 @@ def twitter_search(search_terms=None, since=None, until=None, accounts=None, tar
                                          limit, filepath)
                 search_str_from = search_str + " from:" + act
                 logger.info("Search : %s", search_str_from)
-                twit.search(search_str_from)
+                twit.search(search_str_from, target_type=DEFAULT_TARGET_TYPE, language=language)
 
 
 def main():
@@ -344,7 +404,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--search", default=[], nargs='+')
     parser.add_argument("-f", default=DEFAULT_TARGET_TYPE, type=str)
+    parser.add_argument("--user_stats", action="store_true", default=False, required=False)
     parser.add_argument('--accounts', nargs='+', required=False)
+    parser.add_argument('--l', type=str, required=False)
     parser.add_argument("--since", type=str)
     parser.add_argument("--until", type=str)
     parser.add_argument("--rate_delay", type=int, default=DEFAULT_RATE_DELAY)
@@ -354,9 +416,9 @@ def main():
     parser.add_argument("--output_file", type=str)
     args = parser.parse_args()
 
-    twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until,
+    twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until, language=args.l,
                    accounts=args.accounts, rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
-                 output_dir=args.output_dir, output_file=args.output_file)
+                 output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats)
 
 
 if __name__ == '__main__':
