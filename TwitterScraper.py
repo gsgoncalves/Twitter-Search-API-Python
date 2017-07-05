@@ -363,7 +363,7 @@ class TwitterSearchImpl(TwitterSearch):
         return True
 
 
-def twitter_search(search_terms=None, since=None, until=None, language=None, accounts=None, target_type=DEFAULT_TARGET_TYPE,
+def twitter_search(search_terms=None, since=None, until=None, language=None, accounts=None, type=None, target_type=DEFAULT_TARGET_TYPE,
                  rate_delay=DEFAULT_RATE_DELAY, error_delay=DEFAULT_ERROR_DELAY, user_stats=False, limit=DEFAULT_LIMIT,
                  output_dir=".", output_file=None):
         session = requests.Session()
@@ -378,6 +378,9 @@ def twitter_search(search_terms=None, since=None, until=None, language=None, acc
 
         if until:
             search_str += " until:" + until
+
+        if type:
+            search_str += " type:" + type
 
         if not accounts:
             if not search_terms:
@@ -419,7 +422,8 @@ def main():
     parser.add_argument("-f", default=DEFAULT_TARGET_TYPE, type=str)
     parser.add_argument("--user_stats", action="store_true", default=False, required=False)
     parser.add_argument('--accounts', nargs='+', required=False)
-    parser.add_argument('--l', type=str, required=False)
+    parser.add_argument('-l', type=str, required=False)
+    parser.add_argument("--type", type=str)
     parser.add_argument("--since", type=str)
     parser.add_argument("--until", type=str)
     parser.add_argument("--rate_delay", type=int, default=DEFAULT_RATE_DELAY)
@@ -430,7 +434,7 @@ def main():
     args = parser.parse_args()
 
     twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until, language=args.l,
-                   accounts=args.accounts, rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
+                   accounts=args.accounts, type=args.type, rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
                  output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats)
 
 
