@@ -176,6 +176,14 @@ class TwitterSearch:
             if image_field:
                 tweet['image-url'] = image_field['data-image-url']
 
+            twitter_video_field = li.find("div", class_="AdaptiveMedia-videoContainer")
+            if twitter_video_field:
+                tweet['video-url'] = "https://twitter.com/i/videos/tweet/%s" % tweet["id_str"]
+
+            external_video_field = li.find("div", class_="js-media-container")
+            if (twitter_video_field is None) and (image_field is None) and external_video_field:
+                tweet['video-url'] = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
+
             # Tweet date
             date_span = li.find("span", class_="_timestamp")
             if date_span is not None:
@@ -363,7 +371,7 @@ class TwitterSearchImpl(TwitterSearch):
         return True
 
 
-def twitter_search(search_terms=None, since=None, until=None, language=None, accounts=None, type=None, target_type=DEFAULT_TARGET_TYPE,
+def twitter_search(search_terms=None, since=None, until=None, language=None, accounts=None, search_filter=None, target_type=DEFAULT_TARGET_TYPE,
                  rate_delay=DEFAULT_RATE_DELAY, error_delay=DEFAULT_ERROR_DELAY, user_stats=False, limit=DEFAULT_LIMIT,
                  output_dir=".", output_file=None):
         session = requests.Session()
@@ -379,8 +387,8 @@ def twitter_search(search_terms=None, since=None, until=None, language=None, acc
         if until:
             search_str += " until:" + until
 
-        if type:
-            search_str += " type:" + type
+        if search_filter:
+            search_str += " filter:" + search_filter
 
         if not accounts:
             if not search_terms:
@@ -423,7 +431,7 @@ def main():
     parser.add_argument("--user_stats", action="store_true", default=False, required=False)
     parser.add_argument('--accounts', nargs='+', required=False)
     parser.add_argument('-l', type=str, required=False)
-    parser.add_argument("--type", type=str)
+    parser.add_argument("--filter", type=str)
     parser.add_argument("--since", type=str)
     parser.add_argument("--until", type=str)
     parser.add_argument("--rate_delay", type=int, default=DEFAULT_RATE_DELAY)
@@ -434,7 +442,7 @@ def main():
     args = parser.parse_args()
 
     twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until, language=args.l,
-                   accounts=args.accounts, type=args.type, rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
+                   accounts=args.accounts, search_filter=args.filter, rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
                  output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats)
 
 
