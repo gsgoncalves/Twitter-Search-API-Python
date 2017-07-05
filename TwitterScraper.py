@@ -119,8 +119,10 @@ class TwitterSearch:
             else:
                 logger.info("Sleeping for %i", self.error_delay)
                 sleep(self.error_delay)
-                if retry_num == MAX_RETRIES_SESSION:
+                if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
+                    headers = {'user-agent': UA.random}
                     self.session = requests.session()
+                    self.session.headers.update(headers)
                 elif retry_num == MAX_RETRIES:
                     return None
 
@@ -169,6 +171,10 @@ class TwitterSearch:
                 tweet['user']['id'] = int(user_details_div['data-user-id'])
                 tweet['user']['screen_name'] = user_details_div['data-screen-name']
                 tweet['user']['name'] = user_details_div['data-name']
+
+            image_field = li.find("div", class_="AdaptiveMedia-photoContainer")
+            if image_field:
+                tweet['image-url'] = image_field['data-image-url']
 
             # Tweet date
             date_span = li.find("span", class_="_timestamp")
