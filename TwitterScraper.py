@@ -90,7 +90,7 @@ class TwitterSearch:
 
             if min_item is not max_item:
                 url = self.construct_url(query, target_type=target_type, max_position=max_item,
-                                                    language=kwargs['language'])
+                                         language=kwargs['language'])
                 # Sleep for our rate_delay
                 sleep(self.rate_delay)
                 response = self.execute_search(url)
@@ -183,18 +183,19 @@ class TwitterSearch:
 
             media_card_container = li.find("div", class_="js-media-container")
             if (twitter_video_field is None) and (image_field is None) and media_card_container:
-                card_type = media_card_container['data-card2-name']
+                if 'data-card2-name' in media_card_container:  # Only care about media. Ignore Tweet Quotes, etc.
+                    media_card_type = media_card_container['data-card2-name']
 
-                timeline_expanded_url = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
-                if "summary" in card_type:  # Expanded URL w/ image
-                    iframe_container = media_card_container.find("div", class_="js-macaw-cards-iframe-container")
-                    tweet['expanded_url_card'] = "https://twitter.com" + iframe_container['data-src']
-                    tweet['expanded_url'] = timeline_expanded_url
+                    timeline_expanded_url = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
+                    if "summary" in media_card_type:  # Expanded URL w/ image
+                        iframe_container = media_card_container.find("div", class_="js-macaw-cards-iframe-container")
+                        tweet['expanded_url_card'] = "https://twitter.com" + iframe_container['data-src']
+                        tweet['expanded_url'] = timeline_expanded_url
 
-                if "player" in card_type:  # Its a embedded video
-                    tweet['video-url'] = timeline_expanded_url
+                    if "player" in media_card_type:  # Embedded video
+                        tweet['video-url'] = timeline_expanded_url
 
-                # else: it's some other element that we do not care (e.g. a poll)
+                    # else: it's some other element that we do not care (e.g. a poll)
 
             # Tweet date
             date_span = li.find("span", class_="_timestamp")
@@ -333,6 +334,7 @@ class TwitterSearch:
                 items[i + j] = {**items[i + j], **statuses[j].AsDict()}
 
         return items
+
 
 class TwitterSearchImpl(TwitterSearch):
     def __init__(self, session, rate_delay, error_delay, max_items, filepath):
