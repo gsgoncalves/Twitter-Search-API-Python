@@ -11,6 +11,7 @@ import json
 import datetime
 from os import path
 from abc import ABCMeta, abstractmethod
+
 try:
     from urllib.parse import urlencode
     from urllib.parse import urlunparse
@@ -23,7 +24,6 @@ import logging
 from fake_useragent import UserAgent
 
 __author__ = 'Tom Dickinson, Flavio Martins'
-
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -47,7 +47,6 @@ UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/2010
 
 
 class TwitterSearch:
-
     __metaclass__ = ABCMeta
 
     def __init__(self, session, rate_delay, error_delay=5):
@@ -182,7 +181,9 @@ class TwitterSearch:
 
             external_video_field = li.find("div", class_="js-media-container")
             if (twitter_video_field is None) and (image_field is None) and external_video_field:
-                tweet['video-url'] = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
+                a_video = li.find("a", class_="twitter-timeline-link")
+                if a_video:  # else it's some other element (e.g. a poll)
+                    tweet['video-url'] = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
 
             # Tweet date
             date_span = li.find("span", class_="_timestamp")
@@ -371,57 +372,59 @@ class TwitterSearchImpl(TwitterSearch):
         return True
 
 
-def twitter_search(search_terms=None, since=None, until=None, language=None, accounts=None, search_filter=None, target_type=DEFAULT_TARGET_TYPE,
-                 rate_delay=DEFAULT_RATE_DELAY, error_delay=DEFAULT_ERROR_DELAY, user_stats=False, limit=DEFAULT_LIMIT,
-                 output_dir=".", output_file=None):
-        session = requests.Session()
+def twitter_search(search_terms=None, since=None, until=None, language=None, accounts=None, search_filter=None,
+                   target_type=DEFAULT_TARGET_TYPE,
+                   rate_delay=DEFAULT_RATE_DELAY, error_delay=DEFAULT_ERROR_DELAY, user_stats=False,
+                   limit=DEFAULT_LIMIT,
+                   output_dir=".", output_file=None):
+    session = requests.Session()
 
-        search_str = ""
+    search_str = ""
 
-        if search_terms:
-            search_str = " ".join(search_terms)
+    if search_terms:
+        search_str = " ".join(search_terms)
 
-        if since:
-            search_str += " since:" + since
+    if since:
+        search_str += " since:" + since
 
-        if until:
-            search_str += " until:" + until
+    if until:
+        search_str += " until:" + until
 
-        if search_filter:
-            search_str += " filter:" + search_filter
+    if search_filter:
+        search_str += " filter:" + search_filter
 
-        if not accounts:
-            if not search_terms:
-                logger.error("Nothing to search")
-                sys.exit(1)
-            elif not output_file:
-                logger.error("No output_file specified")
-                sys.exit(1)
-            else:
-                filepath = path.join(output_dir, output_file)
-                twit = TwitterSearchImpl(session, rate_delay, error_delay,
-                                         limit, filepath)
-                logger.info("Search : %s",  search_str)
-                twit.search(search_str, target_type=target_type, user_stats=user_stats, language=language)
+    if not accounts:
+        if not search_terms:
+            logger.error("Nothing to search")
+            sys.exit(1)
+        elif not output_file:
+            logger.error("No output_file specified")
+            sys.exit(1)
         else:
-            if not path.isdir(output_dir):
-                logger.error('Output directory does not exist.')
-                sys.exit(1)
+            filepath = path.join(output_dir, output_file)
+            twit = TwitterSearchImpl(session, rate_delay, error_delay,
+                                     limit, filepath)
+            logger.info("Search : %s", search_str)
+            twit.search(search_str, target_type=target_type, user_stats=user_stats, language=language)
+    else:
+        if not path.isdir(output_dir):
+            logger.error('Output directory does not exist.')
+            sys.exit(1)
 
-            for act in accounts:
-                filepath = path.join(output_dir, act + '.jsonl')
-                try:
-                    if path.getsize(filepath) > 0:
-                        logger.debug('%s : File already has content.', filepath)
-                        continue
-                except OSError:
-                    pass
+        for act in accounts:
+            filepath = path.join(output_dir, act + '.jsonl')
+            try:
+                if path.getsize(filepath) > 0:
+                    logger.debug('%s : File already has content.', filepath)
+                    continue
+            except OSError:
+                pass
 
-                twit = TwitterSearchImpl(session, rate_delay, error_delay,
-                                         limit, filepath)
-                search_str_from = search_str + " from:" + act
-                logger.info("Search : %s", search_str_from)
-                twit.search(search_str_from, target_type=DEFAULT_TARGET_TYPE, language=language)
+            twit = TwitterSearchImpl(session, rate_delay, error_delay,
+                                     limit, filepath)
+            search_str_from = search_str + " from:" + act
+            logger.info("Search : %s", search_str_from)
+            twit.search(search_str_from, target_type=DEFAULT_TARGET_TYPE, language=language)
 
 
 def main():
@@ -442,8 +445,9 @@ def main():
     args = parser.parse_args()
 
     twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until, language=args.l,
-                   accounts=args.accounts, search_filter=args.filter, rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
-                 output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats)
+                   accounts=args.accounts, search_filter=args.filter, rate_delay=args.rate_delay,
+                   error_delay=args.error_delay, limit=args.limit,
+                   output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats)
 
 
 if __name__ == '__main__':
