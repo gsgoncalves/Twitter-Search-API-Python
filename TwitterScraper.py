@@ -424,7 +424,10 @@ def twitter_search(search_terms=None, since=None, until=None, language=None, acc
             sys.exit(1)
 
         for act in accounts:
-            filepath = path.join(output_dir, act + '.jsonl')
+            if output_file:
+                filepath = path.join(output_dir, output_file)
+            else:
+                filepath = path.join(output_dir, act + '.jsonl')
             try:
                 if path.getsize(filepath) > 0:
                     logger.debug('%s : File already has content.', filepath)
