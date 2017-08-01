@@ -21,9 +21,10 @@ except ImportError:
 from bs4 import BeautifulSoup
 from time import sleep
 import logging
-from fake_useragent import UserAgent
+from fake_useragent import UserAgent, settings as fake_useragent_settings
 
-__author__ = 'Tom Dickinson, Flavio Martins'
+
+__author__ = 'Tom Dickinson, Flavio Martins, David Semedo'
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -43,13 +44,11 @@ MAX_RETRIES = MAX_RETRIES_SESSION*5
 PROGRESS_PER = 100
 DEFAULT_TARGET_TYPE = "tweets"
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
-UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0')
-
 
 class TwitterSearch:
     __metaclass__ = ABCMeta
 
-    def __init__(self, session, rate_delay, error_delay=5):
+    def __init__(self, session, rate_delay, error_delay=5, useragent_cache_path=fake_useragent_settings.DB):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
@@ -57,6 +56,9 @@ class TwitterSearch:
         self.session = session
         self.rate_delay = rate_delay
         self.error_delay = error_delay
+
+        self.UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0',
+                       path=useragent_cache_path)
 
     def search(self, query, target_type, **kwargs):
         """
@@ -119,7 +121,7 @@ class TwitterSearch:
                 logger.info("Sleeping for %i", self.error_delay)
                 sleep(self.error_delay)
                 if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
-                    headers = {'user-agent': UA.random}
+                    headers = {'user-agent': self.UA.random}
                     self.session = requests.session()
                     self.session.headers.update(headers)
                 elif retry_num == MAX_RETRIES:
@@ -337,13 +339,13 @@ class TwitterSearch:
 
 
 class TwitterSearchImpl(TwitterSearch):
-    def __init__(self, session, rate_delay, error_delay, max_items, filepath):
+    def __init__(self, session, rate_delay, error_delay, max_items, filepath, useragent_cache_path=fake_useragent_settings.DB):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
         :param max_items: Maximum number of items to collect for this example
         """
-        super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay)
+        super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay, useragent_cache_path)
         self.max_items = max_items
         self.counter = 0
         self.filepath = filepath
@@ -351,7 +353,7 @@ class TwitterSearchImpl(TwitterSearch):
 
     def search(self, query, target_type, **kwargs):
         # Specify a user agent to prevent Twitter from returning a profile card
-        headers = {'user-agent': UA.random}
+        headers = {'user-agent': self.UA.random}
         self.session.headers.update(headers)
 
         self.jsonl_file = io.open(self.filepath, 'w', encoding='utf-8')
@@ -388,7 +390,7 @@ def twitter_search(search_terms=None, since=None, until=None, language=None, acc
                    target_type=DEFAULT_TARGET_TYPE,
                    rate_delay=DEFAULT_RATE_DELAY, error_delay=DEFAULT_ERROR_DELAY, user_stats=False,
                    limit=DEFAULT_LIMIT,
-                   output_dir=".", output_file=None):
+                   output_dir=".", output_file=None, useragent_cache_path=fake_useragent_settings.DB):
     session = requests.Session()
 
     search_str = ""
@@ -415,7 +417,7 @@ def twitter_search(search_terms=None, since=None, until=None, language=None, acc
         else:
             filepath = path.join(output_dir, output_file)
             twit = TwitterSearchImpl(session, rate_delay, error_delay,
-                                     limit, filepath)
+                                     limit, filepath, useragent_cache_path=useragent_cache_path)
             logger.info("Search : %s", search_str)
             twit.search(search_str, target_type=target_type, user_stats=user_stats, language=language)
     else:
@@ -436,7 +438,7 @@ def twitter_search(search_terms=None, since=None, until=None, language=None, acc
                 pass
 
             twit = TwitterSearchImpl(session, rate_delay, error_delay,
-                                     limit, filepath)
+                                     limit, filepath, useragent_cache_path=useragent_cache_path)
             search_str_from = search_str + " from:" + act
             logger.info("Search : %s", search_str_from)
             twit.search(search_str_from, target_type=DEFAULT_TARGET_TYPE, language=language)
@@ -457,12 +459,14 @@ def main():
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--output_dir", type=str, default='.')
     parser.add_argument("--output_file", type=str)
+    parser.add_argument("--fake_useragent_cache_path", type=str, default=fake_useragent_settings.DB)
     args = parser.parse_args()
 
     twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until, language=args.l,
                    accounts=args.accounts, search_filter=args.filter, rate_delay=args.rate_delay,
                    error_delay=args.error_delay, limit=args.limit,
-                   output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats)
+                   output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats,
+                   useragent_cache_path=args.fake_useragent_cache_path)
 
 
 if __name__ == '__main__':
