@@ -151,7 +151,7 @@ class TwitterSearch:
                 tweet['epoch'] = int(date_span['data-time'])
 
             if tweet['epoch'] is not None:
-                t = datetime.datetime.fromtimestamp((tweet['epoch']))
+                t = datetime.datetime.utcfromtimestamp((tweet['epoch']))
                 tweet['created_at'] = t.strftime(DATE_FORMAT)
 
             # Tweet Retweets
