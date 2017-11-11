@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import re
 import io
 import sys
 import argparse
@@ -135,6 +136,10 @@ class TwitterSearch:
             # Tweet Text
             text_p = li.find("p", class_="tweet-text")
             if text_p is not None:
+                for a in text_p.find_all('a'):
+                    a_text = a.text
+                    if re.match("^https?://", a_text):
+                        a.replace_with(" %s" % a_text)
                 tweet['text'] = text_p.get_text()
 
             # Tweet User ID, User Screen Name, User Name
