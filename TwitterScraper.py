@@ -11,18 +11,14 @@ import json
 import datetime
 from os import path
 from abc import ABCMeta, abstractmethod
-try:
-    from urllib.parse import urlencode
-    from urllib.parse import urlunparse
-except ImportError:
-    from urllib import urlencode
-    from urlparse import urlunparse
+from urllib.parse import urlencode
+from urllib.parse import urlunparse
 from bs4 import BeautifulSoup
 from time import sleep
 import logging
 from fake_useragent import UserAgent, settings as fake_useragent_settings
 
-__author__ = 'Tom Dickinson, Flavio Martins, David Semedo'
+__author__ = 'Tom Dickinson, Flavio Martins, David Semedo, Gustavo Goncalves'
 
 
 logger = logging.getLogger(__name__)
