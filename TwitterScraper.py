@@ -17,20 +17,23 @@ from bs4 import BeautifulSoup
 from time import sleep
 import logging
 from fake_useragent import UserAgent, settings as fake_useragent_settings
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock  # TODO - Improvement: Don't use locks
+import time
 
 __author__ = 'Tom Dickinson, Flavio Martins, David Semedo, Gustavo Goncalves'
 
 
 logger = logging.getLogger(__name__)
 
-
 # TODO is there any benefit for this rate delay be random generated?
-DEFAULT_RATE_DELAY = 0.25
+DEFAULT_RATE_DELAY = 0.0
 DEFAULT_ERROR_DELAY = 5.0
 DEFAULT_LIMIT = 50000
 MAX_RETRIES_SESSION = 5
 MAX_RETRIES = MAX_RETRIES_SESSION*5
 SCRAPING_RATE = 100
+DEFAULT_NUM_THREADS = 8
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
 
 
@@ -46,15 +49,15 @@ class TwitterSearch:
         self.session = session
         self.rate_delay = rate_delay
         self.error_delay = error_delay
-
         self.UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0',
                             path=useragent_cache_path)
 
-    def search(self, query):
+    def perform_search(self, query, day_index):
         """
         Scrape items from twitter
         :param query:   Query to search Twitter with. Takes form of queries constructed with using Twitters
                         advanced search: https://twitter.com/search-advanced
+        :param day_index: index of the per day file to access the jsonl_files array.
         """
         url = self.construct_url(query)
         continue_search = True
@@ -72,7 +75,7 @@ class TwitterSearch:
             if min_tweet is None:
                 min_tweet = tweets[0]
 
-            continue_search = self.save_tweets(tweets)
+            continue_search = self.save_tweets(tweets, day_index)
 
             # Our max tweet is the last tweet in the list
             max_tweet = tweets[-1]
@@ -208,62 +211,86 @@ class TwitterSearch:
         return urlunparse(url_tupple)
 
     @abstractmethod
-    def save_tweets(self, tweets):
+    def save_tweets(self, tweets, day_index):
         """
         An abstract method that's called with a list of tweets.
         When implementing this class, you can do whatever you want with these tweets.
         """
 
 
-class TwitterSearchImpl(TwitterSearch):
-
-    def __init__(self, session, rate_delay, error_delay, max_tweets, filepath,
-                 useragent_cache_path=fake_useragent_settings.DB):
-        """
-        :param rate_delay: How long to pause between calls to Twitter
-        :param error_delay: How long to pause when an error occurs
-        :param max_tweets: Maximum number of tweets to collect
-        """
-        super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay, useragent_cache_path)
-        self.max_tweets = max_tweets
+class TwitterSlicer(TwitterSearch):
+    """
+    Inspired by: https://github.com/simonlindgren/TwitterScraper/blob/master/TwitterSucker.py
+    The concept is to have an implementation that actually splits the query into multiple days.
+    The only additional parameters a user has to input, is a minimum date, and a maximum date.
+    This method also supports parallel scraping.
+    """
+    def __init__(self, session, rate_delay, error_delay, since, until, limit, filepath, useragent_cache_path,
+                 n_threads=1):
+        super(TwitterSlicer, self).__init__(session, rate_delay, error_delay, useragent_cache_path)
+        self.since = since
+        self.until = until
+        self.limit = limit
+        self.n_threads = n_threads
         self.counter = 0
+        self.counter_lock = Lock()
         self.filepath = filepath
-        self.jsonl_file = None
+        self.jsonl_files = []
 
     def search(self, query):
         # Specify a user agent to prevent Twitter from returning a profile card
         headers = {'user-agent': self.UA.random}
         self.session.headers.update(headers)
 
-        self.jsonl_file = io.open(self.filepath, 'w', encoding='utf-8')
-        super(TwitterSearchImpl, self).search(query)
-        self.jsonl_file.close()
+        time_since = datetime.datetime.strptime(self.since, "%Y-%m-%d")
+        time_until = datetime.datetime.strptime(self.until, "%Y-%m-%d")
 
-    def save_tweets(self, tweets):
+        n_days = (time_until - time_since).days
+        tp = ThreadPoolExecutor(max_workers=self.n_threads)
+        for i in range(0, n_days):
+            self.jsonl_files.append(io.open(self.filepath, 'w', encoding='utf-8'))
+            since_query = time_since + datetime.timedelta(days=i)
+            until_query = time_since + datetime.timedelta(days=(i + 1))
+            day_query = "%s since:%s until:%s" % (query, since_query.strftime("%Y-%m-%d"),
+                                                  until_query.strftime("%Y-%m-%d"))
+            tp.submit(self.perform_search, day_query, i)
+        tp.shutdown(wait=True)
+
+    def save_tweets(self, tweets, day_index):
         """
         Just prints out tweets
-        :return:
+        :return: True always
         """
         for tweet in tweets:
             # Lets add a counter so we only collect a max number of tweets
+            self.counter_lock.acquire()
             self.counter += 1
+            self.counter_lock.release()
 
-            data = json.dumps(tweet, ensure_ascii=False, encoding='utf-8')
-            self.jsonl_file.write(data + '\n')
+            data = json.dumps(tweet, ensure_ascii=False)
+            self.jsonl_files[day_index].write(data + '\n')
 
+            self.counter_lock.acquire()
             if self.counter % SCRAPING_RATE == 0:
-                logger.info("%s : %i tweets saved to file.", self.filepath, self.counter)
+                logger.info("%s : %i items saved to file.", self.filepath, self.counter)
+            self.counter_lock.release()
 
             # When we've reached our max limit, return False so collection stops
-            if self.counter >= self.max_tweets:
+            self.counter_lock.acquire()
+            if self.counter >= self.limit:
+                self.counter_lock.release()
                 return False
-
+            self.counter_lock.release()
         return True
+
+    def close_all_files(self):
+        for file in self.jsonl_files:
+            file.close()
 
 
 def twitter_search(search_terms=None, since=None, until=None, accounts=None, rate_delay=DEFAULT_RATE_DELAY,
                    error_delay=DEFAULT_ERROR_DELAY, limit=DEFAULT_LIMIT, output_dir=".", output_file=None,
-                   useragent_cache_path=fake_useragent_settings.DB):
+                   useragent_cache_path=fake_useragent_settings.DB, n_threads=DEFAULT_NUM_THREADS):
 
     session = requests.Session()
 
@@ -272,11 +299,11 @@ def twitter_search(search_terms=None, since=None, until=None, accounts=None, rat
     if search_terms:
         search_str = " ".join(search_terms)
 
-    if since:
-        search_str += " since:" + since
+    #  if since:
+    #     search_str += " since:" + since
 
-    if until:
-        search_str += " until:" + until
+    #  if until:
+    #      search_str += " until:" + until
 
     if not accounts:
         if not search_terms:
@@ -287,10 +314,11 @@ def twitter_search(search_terms=None, since=None, until=None, accounts=None, rat
             sys.exit(1)
         else:
             filepath = path.join(output_dir, output_file)
-            twit = TwitterSearchImpl(session, rate_delay, error_delay,
-                                     limit, filepath)
+            twit = TwitterSlicer(session, rate_delay, error_delay, since, until, limit, filepath, useragent_cache_path,
+                                 n_threads)
             logger.info("Search : %s", search_str)
             twit.search(search_str)
+            twit.close_all_files()
     else:
         if not path.isdir(output_dir):
             logger.error('Output directory does not exist.')
@@ -305,11 +333,12 @@ def twitter_search(search_terms=None, since=None, until=None, accounts=None, rat
             except OSError:
                 pass
 
-            twit = TwitterSearchImpl(session, rate_delay, error_delay,
-                                     limit, filepath, useragent_cache_path=useragent_cache_path)
+            twit = TwitterSlicer(session, rate_delay, error_delay, since, until, limit, filepath, useragent_cache_path,
+                                 n_threads)
             search_str_from = search_str + " from:" + act
             logger.info("Search : %s", search_str_from)
             twit.search(search_str_from)
+            twit.close_all_files()
 
 
 if __name__ == '__main__':
@@ -325,9 +354,12 @@ if __name__ == '__main__':
     parser.add_argument("--output_dir", type=str, default='.')
     parser.add_argument("--output_file", type=str)
     parser.add_argument("--fake_useragent_cache_path", type=str, default=fake_useragent_settings.DB)
+    parser.add_argument("--n_threads", type=int, default=DEFAULT_NUM_THREADS)
     args = parser.parse_args()
+
+    #  since or until: YYYY-MM-DD
 
     twitter_search(search_terms=args.search, since=args.since, until=args.until, accounts=args.accounts,
                    rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
                    output_dir=args.output_dir, output_file=args.output_file,
-                   useragent_cache_path=args.fake_useragent_cache_path)
+                   useragent_cache_path=args.fake_useragent_cache_path, n_threads=args.n_threads)
