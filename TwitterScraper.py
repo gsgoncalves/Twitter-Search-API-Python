@@ -253,7 +253,7 @@ class TwitterSearchImpl(TwitterSearch):
 def main():
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--search", type=str)
+    parser.add_argument("--search", default=[], nargs='+', required=False)
     parser.add_argument('--accounts', nargs='+', required=False)
     parser.add_argument("--since", type=str)
     parser.add_argument("--until", type=str)
