@@ -22,13 +22,18 @@ from time import sleep
 import logging
 from fake_useragent import UserAgent
 
-__author__ = 'Tom Dickinson, Flavio Martins'
+__author__ = 'Tom Dickinson, Flavio Martins, David Semedo'
 
 
 logger = logging.getLogger(__name__)
 
 
-PROGRESS_PER = 100
+DEFAULT_RATE_DELAY = 0.25 #TODO is there any benefit for this to be random generated?
+DEFAULT_ERROR_DELAY = 5.0
+DEFAULT_LIMIT = 50000
+MAX_RETRIES_SESSION = 5
+MAX_RETRIES = MAX_RETRIES_SESSION*5
+SCRAPING_RATE = 100
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
 UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0')
 
@@ -79,10 +84,11 @@ class TwitterSearch:
                 sleep(self.rate_delay)
                 response = self.execute_search(url)
 
-    def execute_search(self, url):
+    def execute_search(self, url, retry_num=0):
         """
         Executes a search to Twitter for the given URL
         :param url: URL to search twitter with
+        :param retry_num: Retry number of current function call
         :return: A JSON object with data from Twitter
         """
         try:
@@ -95,12 +101,16 @@ class TwitterSearch:
         except HTTPError as e:
             # 400 Bad Request
             if e.response.status_code == 400:
-                return data
+                return response.json()
             else:
-                logger.error(e.message)
                 logger.info("Sleeping for %i", self.error_delay)
                 sleep(self.error_delay)
-                return self.execute_search(url)
+                if retry_num == MAX_RETRIES_SESSION:
+                    self.session = requests.session()
+                elif retry_num == MAX_RETRIES:
+                    return None
+
+                return self.execute_search(url, retry_num + 1)
 
     @staticmethod
     def parse_tweets(items_html):
@@ -211,7 +221,7 @@ class TwitterSearchImpl(TwitterSearch):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
-        :param max_tweets: Maximum number of tweets to collect for this example
+        :param max_tweets: Maximum number of tweets to collect
         """
         super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay)
         self.max_tweets = max_tweets
@@ -240,7 +250,7 @@ class TwitterSearchImpl(TwitterSearch):
             data = json.dumps(tweet, ensure_ascii=False, encoding='utf-8')
             self.jsonl_file.write(data + '\n')
 
-            if self.counter % PROGRESS_PER == 0:
+            if self.counter % SCRAPING_RATE == 0:
                 logger.info("%s : %i tweets saved to file.", self.filepath, self.counter)
 
             # When we've reached our max limit, return False so collection stops
@@ -250,16 +260,16 @@ class TwitterSearchImpl(TwitterSearch):
         return True
 
 
-def main():
+if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("--search", default=[], nargs='+', required=False)
     parser.add_argument('--accounts', nargs='+', required=False)
     parser.add_argument("--since", type=str)
     parser.add_argument("--until", type=str)
-    parser.add_argument("--rate_delay", type=int, default=0)
-    parser.add_argument("--error_delay", type=int, default=5)
-    parser.add_argument("--limit", type=int, default=50000)
+    parser.add_argument("--rate_delay", type=int, default=DEFAULT_RATE_DELAY)
+    parser.add_argument("--error_delay", type=int, default=DEFAULT_ERROR_DELAY)
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--output_dir", type=str, default='.')
     parser.add_argument("--output_file", type=str)
     args = parser.parse_args()
@@ -309,7 +319,3 @@ def main():
             search_str_from = search_str + " from:" + act
             logger.info("Search : %s", search_str_from)
             twit.search(search_str_from)
-
-
-if __name__ == '__main__':
-    main()
