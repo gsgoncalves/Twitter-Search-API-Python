@@ -20,7 +20,7 @@ except ImportError:
 from bs4 import BeautifulSoup
 from time import sleep
 import logging
-from fake_useragent import UserAgent
+from fake_useragent import UserAgent, settings as fake_useragent_settings
 
 __author__ = 'Tom Dickinson, Flavio Martins, David Semedo'
 
@@ -35,14 +35,13 @@ MAX_RETRIES_SESSION = 5
 MAX_RETRIES = MAX_RETRIES_SESSION*5
 SCRAPING_RATE = 100
 DATE_FORMAT = "%a %b %d %H:%M:%S +0000 %Y"  # "Fri Mar 29 11:03:41 +0000 2013";
-UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0')
 
 
 class TwitterSearch:
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, session, rate_delay, error_delay=5):
+    def __init__(self, session, rate_delay, error_delay=5, useragent_cache_path=fake_useragent_settings.DB):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
@@ -50,6 +49,9 @@ class TwitterSearch:
         self.session = session
         self.rate_delay = rate_delay
         self.error_delay = error_delay
+
+        self.UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0',
+                            path=useragent_cache_path)
 
     def search(self, query):
         """
@@ -106,7 +108,7 @@ class TwitterSearch:
                 logger.info("Sleeping for %i", self.error_delay)
                 sleep(self.error_delay)
                 if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
-                    headers = {'user-agent': UA.random}
+                    headers = {'user-agent': self.UA.random}
                     self.session = requests.session()
                     self.session.headers.update(headers)
                 elif retry_num == MAX_RETRIES:
@@ -218,13 +220,14 @@ class TwitterSearch:
 
 class TwitterSearchImpl(TwitterSearch):
 
-    def __init__(self, session, rate_delay, error_delay, max_tweets, filepath):
+    def __init__(self, session, rate_delay, error_delay, max_tweets, filepath,
+                 useragent_cache_path=fake_useragent_settings.DB):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
         :param max_tweets: Maximum number of tweets to collect
         """
-        super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay)
+        super(TwitterSearchImpl, self).__init__(session, rate_delay, error_delay, useragent_cache_path)
         self.max_tweets = max_tweets
         self.counter = 0
         self.filepath = filepath
@@ -232,7 +235,7 @@ class TwitterSearchImpl(TwitterSearch):
 
     def search(self, query):
         # Specify a user agent to prevent Twitter from returning a profile card
-        headers = {'user-agent': UA.random}
+        headers = {'user-agent': self.UA.random}
         self.session.headers.update(headers)
 
         self.jsonl_file = io.open(self.filepath, 'w', encoding='utf-8')
@@ -261,6 +264,57 @@ class TwitterSearchImpl(TwitterSearch):
         return True
 
 
+def twitter_search(search_terms=None, since=None, until=None, accounts=None, rate_delay=DEFAULT_RATE_DELAY,
+                   error_delay=DEFAULT_ERROR_DELAY, limit=DEFAULT_LIMIT, output_dir=".", output_file=None,
+                   useragent_cache_path=fake_useragent_settings.DB):
+
+    session = requests.Session()
+
+    search_str = ""
+
+    if search_terms:
+        search_str = " ".join(search_terms)
+
+    if since:
+        search_str += " since:" + since
+
+    if until:
+        search_str += " until:" + until
+
+    if not accounts:
+        if not search_terms:
+            logger.error("Nothing to search")
+            sys.exit(1)
+        elif not output_file:
+            logger.error("No output_file specified")
+            sys.exit(1)
+        else:
+            filepath = path.join(output_dir, output_file)
+            twit = TwitterSearchImpl(session, rate_delay, error_delay,
+                                     limit, filepath)
+            logger.info("Search : %s", search_str)
+            twit.search(search_str)
+    else:
+        if not path.isdir(output_dir):
+            logger.error('Output directory does not exist.')
+            sys.exit(1)
+
+        for act in accounts:
+            filepath = path.join(output_dir, act + '.jsonl')
+            try:
+                if path.getsize(filepath) > 0:
+                    logger.debug('%s : File already has content.', filepath)
+                    continue
+            except OSError:
+                pass
+
+            twit = TwitterSearchImpl(session, rate_delay, error_delay,
+                                     limit, filepath, useragent_cache_path=useragent_cache_path)
+            search_str_from = search_str + " from:" + act
+            logger.info("Search : %s", search_str_from)
+            twit.search(search_str_from)
+
+
 if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
     parser = argparse.ArgumentParser()
@@ -273,50 +327,11 @@ if __name__ == '__main__':
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--output_dir", type=str, default='.')
     parser.add_argument("--output_file", type=str)
+    parser.add_argument("--fake_useragent_cache_path", type=str, default=fake_useragent_settings.DB)
     args = parser.parse_args()
 
-    session = requests.Session()
-
-    search_str = ""
-
-    if args.search:
-        search_str += args.search
-
-    if args.since:
-        search_str += " since:" + args.since
-
-    if args.until:
-        search_str += " until:" + args.until
-
-    if not args.accounts:
-        if not args.search:
-            logger.error("Nothing to search")
-            sys.exit(1)
-        elif not args.output_file:
-            logger.error("No output_file specified")
-            sys.exit(1)
-        else:
-            filepath = path.join(args.output_dir, args.output_file)
-            twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
-                                     args.limit, filepath)
-            logger.info("Search : %s", search_str)
-            twit.search(search_str)
-    else:
-        if not path.isdir(args.output_dir):
-            logger.error('Output directory does not exist.')
-            sys.exit(1)
-
-        for act in args.accounts:
-            filepath = path.join(args.output_dir, act + '.jsonl')
-            try:
-                if path.getsize(filepath) > 0:
-                    logger.debug('%s : File already has content.', filepath)
-                    continue
-            except OSError:
-                pass
-
-            twit = TwitterSearchImpl(session, args.rate_delay, args.error_delay,
-                                     args.limit, filepath)
-            search_str_from = search_str + " from:" + act
-            logger.info("Search : %s", search_str_from)
-            twit.search(search_str_from)
+    twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until, language=args.l,
+                   accounts=args.accounts, search_filter=args.filter, rate_delay=args.rate_delay,
+                   error_delay=args.error_delay, limit=args.limit,
+                   output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats,
+                   useragent_cache_path=args.fake_useragent_cache_path)
