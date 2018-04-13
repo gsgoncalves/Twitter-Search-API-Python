@@ -138,7 +138,7 @@ class TwitterSearch:
             if text_p is not None:
                 for a in text_p.find_all('a'):
                     a_text = a.text
-                    if re.match("^https?://", a_text):
+                    if re.match("^https?://|^pic.twitter.com", a_text):
                         a.replace_with(" %s" % a_text)
                 tweet['text'] = text_p.get_text()
 
