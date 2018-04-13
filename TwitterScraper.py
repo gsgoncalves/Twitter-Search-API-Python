@@ -28,7 +28,8 @@ __author__ = 'Tom Dickinson, Flavio Martins, David Semedo'
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_RATE_DELAY = 0.25 #TODO is there any benefit for this to be random generated?
+# TODO is there any benefit for this rate delay be random generated?
+DEFAULT_RATE_DELAY = 0.25
 DEFAULT_ERROR_DELAY = 5.0
 DEFAULT_LIMIT = 50000
 MAX_RETRIES_SESSION = 5
@@ -41,7 +42,7 @@ class TwitterSearch:
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, session, rate_delay, error_delay=5, useragent_cache_path=fake_useragent_settings.DB):
+    def __init__(self, session, rate_delay, error_delay, useragent_cache_path=fake_useragent_settings.DB):
         """
         :param rate_delay: How long to pause between calls to Twitter
         :param error_delay: How long to pause when an error occurs
@@ -103,7 +104,7 @@ class TwitterSearch:
         except HTTPError as e:
             # 400 Bad Request
             if e.response.status_code == 400:
-                return response.json()
+                return e.response.json()  # TODO check if this e.response works as expected
             else:
                 logger.info("Sleeping for %i", self.error_delay)
                 sleep(self.error_delay)
@@ -330,8 +331,7 @@ if __name__ == '__main__':
     parser.add_argument("--fake_useragent_cache_path", type=str, default=fake_useragent_settings.DB)
     args = parser.parse_args()
 
-    twitter_search(target_type=args.f, search_terms=args.search, since=args.since, until=args.until, language=args.l,
-                   accounts=args.accounts, search_filter=args.filter, rate_delay=args.rate_delay,
-                   error_delay=args.error_delay, limit=args.limit,
-                   output_dir=args.output_dir, output_file=args.output_file, user_stats=args.user_stats,
+    twitter_search(search_terms=args.search, since=args.since, until=args.until, accounts=args.accounts,
+                   rate_delay=args.rate_delay, error_delay=args.error_delay, limit=args.limit,
+                   output_dir=args.output_dir, output_file=args.output_file,
                    useragent_cache_path=args.fake_useragent_cache_path)
