@@ -105,11 +105,12 @@ class TwitterSearch:
             else:
                 logger.info("Sleeping for %i", self.error_delay)
                 sleep(self.error_delay)
-                if retry_num == MAX_RETRIES_SESSION:
+                if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
+                    headers = {'user-agent': UA.random}
                     self.session = requests.session()
+                    self.session.headers.update(headers)
                 elif retry_num == MAX_RETRIES:
                     return None
-
                 return self.execute_search(url, retry_num + 1)
 
     @staticmethod
