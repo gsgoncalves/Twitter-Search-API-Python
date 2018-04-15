@@ -19,10 +19,14 @@ import logging
 from fake_useragent import UserAgent, settings as fake_useragent_settings
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock  # TODO - Improvement: Don't use locks
-import time
 
 __author__ = 'Tom Dickinson, Flavio Martins, David Semedo, Gustavo Goncalves'
 
+
+#  TODO The code is no saving to different files (flushing?) producing a memory leak. Maybe the locks are to blame.
+#  TODO we have to re-query after 50000 in the case of having more tweets to download.
+#  TODO create a 1 month recursive search after comparing the scraping with twarc.
+#  TODO Update the filters by redoing the query after a predefined time-interval. (4 hours?)
 
 logger = logging.getLogger(__name__)
 
