@@ -26,7 +26,7 @@ from mem_top import mem_top
 __author__ = 'Tom Dickinson, Flavio Martins, David Semedo, Gustavo Goncalves'
 
 
-#  TODO The code is no saving to different files (flushing?) producing a memory leak. Maybe the locks are to blame.
+#  TODO update the hour by hour file management data structures
 #  TODO we have to re-query after 50000 in the case of having more tweets to download.
 #  TODO Update the filters by redoing the query after a predefined time-interval. (4 hours?)
 #  TODO create a 1 month recursive search after comparing the scraping with twarc.
