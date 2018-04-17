@@ -14,7 +14,7 @@ from abc import ABCMeta, abstractmethod
 from urllib.parse import urlencode
 from urllib.parse import urlunparse
 from bs4 import BeautifulSoup
-from time import sleep
+import time
 import logging
 from fake_useragent import UserAgent, settings as fake_useragent_settings
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +31,7 @@ __author__ = 'Tom Dickinson, Flavio Martins, David Semedo, Gustavo Goncalves'
 logger = logging.getLogger(__name__)
 
 # TODO is there any benefit for this rate delay be random generated?
+DEFAULT_BUFFER_SIZE = 76800  # 75MB
 DEFAULT_RATE_DELAY = 0.0
 DEFAULT_ERROR_DELAY = 5.0
 DEFAULT_LIMIT = 50000
@@ -56,12 +57,12 @@ class TwitterSearch:
         self.UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0',
                             path=useragent_cache_path)
 
-    def perform_search(self, query, day_index):
+    def perform_search(self, query, since_date_str):
         """
         Scrape items from twitter
         :param query:   Query to search Twitter with. Takes form of queries constructed with using Twitters
                         advanced search: https://twitter.com/search-advanced
-        :param day_index: index of the per day file to access the jsonl_files array.
+        :param since_date_str: string of the day that will be searched.
         """
         url = self.construct_url(query)
         continue_search = True
@@ -79,7 +80,7 @@ class TwitterSearch:
             if min_tweet is None:
                 min_tweet = tweets[0]
 
-            continue_search = self.save_tweets(tweets, day_index)
+            continue_search = self.save_tweets(tweets, since_date_str)
 
             # Our max tweet is the last tweet in the list
             max_tweet = tweets[-1]
@@ -87,7 +88,7 @@ class TwitterSearch:
                 max_position = "TWEET-%s-%s" % (max_tweet['id_str'], min_tweet['id_str'])
                 url = self.construct_url(query, max_position=max_position)
                 # Sleep for our rate_delay
-                sleep(self.rate_delay)
+                time.sleep(self.rate_delay)
                 response = self.execute_search(url)
 
     def execute_search(self, url, retry_num=0):
@@ -110,7 +111,7 @@ class TwitterSearch:
                 return e.response.json()  # TODO check if this e.response works as expected
             else:
                 logger.info("Sleeping for %i", self.error_delay)
-                sleep(self.error_delay)
+                time.sleep(self.error_delay)
                 if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
                     headers = {'user-agent': self.UA.random}
                     self.session = requests.session()
@@ -215,7 +216,7 @@ class TwitterSearch:
         return urlunparse(url_tupple)
 
     @abstractmethod
-    def save_tweets(self, tweets, day_index):
+    def save_tweets(self, tweets, since_date_str):
         """
         An abstract method that's called with a list of tweets.
         When implementing this class, you can do whatever you want with these tweets.
@@ -239,7 +240,7 @@ class TwitterSlicer(TwitterSearch):
         self.counter = 0
         self.counter_lock = Lock()
         self.filepath = filepath
-        self.jsonl_files = []
+        self.jsonl_files_dicts = {}  # Day dict -> Hour Dict -> File
 
     def search(self, query):
         # Specify a user agent to prevent Twitter from returning a profile card
@@ -252,27 +253,42 @@ class TwitterSlicer(TwitterSearch):
         n_days = (time_until - time_since).days
         tp = ThreadPoolExecutor(max_workers=self.n_threads)
         for i in range(0, n_days):
-            self.jsonl_files.append(io.open(self.filepath, 'w', encoding='utf-8'))
             since_query = time_since + datetime.timedelta(days=i)
             until_query = time_since + datetime.timedelta(days=(i + 1))
-            day_query = "%s since:%s until:%s" % (query, since_query.strftime("%Y-%m-%d"),
-                                                  until_query.strftime("%Y-%m-%d"))
-            tp.submit(self.perform_search, day_query, i)
+            since_date_str = since_query.strftime("%Y-%m-%d")
+            day_query = "%s since:%s until:%s" % (query, since_date_str, until_query.strftime("%Y-%m-%d"))
+            tp.submit(self.perform_search, day_query, since_date_str)
         tp.shutdown(wait=True)
 
-    def save_tweets(self, tweets, day_index):
+    def save_tweets(self, tweets, since_date_str):
         """
-        Just prints out tweets
-        :return: True always
+        Saves tweets to file in json format
+        :return: True until we have reached the max tweets to save, False otherwise
         """
+
         for tweet in tweets:
+            # Determine the hour of the tweet to save it in the respective file
+            created_at_str = tweet['created_at']
+            tweet_time = time.strptime(created_at_str, DATE_FORMAT)  # 'Wed Apr 11 23:59:59 +0000 2018'
+            tweet_hour_str = str(tweet_time.tm_hour)
+
+            # Initialize auxiliary data structures, if needed
+            if since_date_str not in self.jsonl_files_dicts:
+                self.jsonl_files_dicts[since_date_str] = {}
+            if tweet_hour_str not in self.jsonl_files_dicts[since_date_str]:
+                # TODO clean previous auxiliary data structures data are not being used
+                filename = self.filepath + '.' + since_date_str + '.' + tweet_hour_str + ' .jsonl'
+                self.jsonl_files_dicts[since_date_str][tweet_hour_str] = io.open(filename, 'w', encoding='utf-8')
+
+            file = self.jsonl_files_dicts[since_date_str][tweet_hour_str]
+
             # Lets add a counter so we only collect a max number of tweets
             self.counter_lock.acquire()
             self.counter += 1
             self.counter_lock.release()
 
             data = json.dumps(tweet, ensure_ascii=False)
-            self.jsonl_files[day_index].write(data + '\n')
+            file.write(data + '\n')
 
             self.counter_lock.acquire()
             if self.counter % SCRAPING_RATE == 0:
@@ -288,8 +304,10 @@ class TwitterSlicer(TwitterSearch):
         return True
 
     def close_all_files(self):
-        for file in self.jsonl_files:
-            file.close()
+        file_day_dicts = self.jsonl_files_dicts
+        for file_hour_dict in file_day_dicts.values():
+            for file in file_hour_dict.values():
+                file.close()
 
 
 def twitter_search(search_terms=None, since=None, until=None, accounts=None, rate_delay=DEFAULT_RATE_DELAY,
