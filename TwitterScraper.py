@@ -19,19 +19,21 @@ import logging
 from fake_useragent import UserAgent, settings as fake_useragent_settings
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock  # TODO - Improvement: Don't use locks
+import functools
+from mem_top import mem_top
+
 
 __author__ = 'Tom Dickinson, Flavio Martins, David Semedo, Gustavo Goncalves'
 
 
 #  TODO The code is no saving to different files (flushing?) producing a memory leak. Maybe the locks are to blame.
 #  TODO we have to re-query after 50000 in the case of having more tweets to download.
-#  TODO create a 1 month recursive search after comparing the scraping with twarc.
 #  TODO Update the filters by redoing the query after a predefined time-interval. (4 hours?)
+#  TODO create a 1 month recursive search after comparing the scraping with twarc.
 
 logger = logging.getLogger(__name__)
 
 # TODO is there any benefit for this rate delay be random generated?
-DEFAULT_BUFFER_SIZE = 76800  # 75MB
 DEFAULT_RATE_DELAY = 0.0
 DEFAULT_ERROR_DELAY = 5.0
 DEFAULT_LIMIT = 50000
@@ -54,10 +56,9 @@ class TwitterSearch:
         self.session = session
         self.rate_delay = rate_delay
         self.error_delay = error_delay
-        self.UA = UserAgent(fallback='Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0',
-                            path=useragent_cache_path)
+        self.UA = UserAgent(path=useragent_cache_path)
 
-    def perform_search(self, query, since_date_str):
+    def perform_search(self, query, since_date_str): # TODO: I was here about to add recursive query for scraping with more than 50000 tweets
         """
         Scrape items from twitter
         :param query:   Query to search Twitter with. Takes form of queries constructed with using Twitters
@@ -80,6 +81,8 @@ class TwitterSearch:
             if min_tweet is None:
                 min_tweet = tweets[0]
 
+            # print(mem_top(verbose_types=[dict, list]))
+
             continue_search = self.save_tweets(tweets, since_date_str)
 
             # Our max tweet is the last tweet in the list
@@ -91,11 +94,12 @@ class TwitterSearch:
                 time.sleep(self.rate_delay)
                 response = self.execute_search(url)
 
-    def execute_search(self, url, retry_num=0):
+    def execute_search(self, url, retry_num=0, error_num=0):
         """
         Executes a search to Twitter for the given URL
         :param url: URL to search twitter with
         :param retry_num: Retry number of current function call
+        :param error_num: HTTP error number of current function call
         :return: A JSON object with data from Twitter
         """
         try:
@@ -103,13 +107,25 @@ class TwitterSearch:
             response.raise_for_status()  # raise on any HTTPError
             data = response.json()
             return data
-        # If we get a HTTPError exception due to a request timing out, we sleep for our error delay, then make
-        # another attempt
         except HTTPError as e:
+            error_num += 1
             # 400 Bad Request
             if e.response.status_code == 400:
-                return e.response.json()  # TODO check if this e.response works as expected
+                logger.warning("HTTP 400 received")
+                logger.error(e.response.json())  # TODO check if this e.response works as expected
+            # 429 Too many requests
+            elif e.response.status_code == 429:
+                logger.warning("HTTP 429 - Too many requests")
+                reset = int(e.response.headers['x-rate-limit-reset'])
+                logger.debug("Reset time: %s", str(reset))
+                seconds = reset + (error_num + retry_num) * self.error_delay
+                logger.warning("Going to sleep for %s seconds.", str(seconds))
+                time.sleep(seconds)
             else:
+                # If we get a HTTPError exception due to a request timing out, we sleep for our error delay, then make
+                # another attempt
+                logger.debug(e.response.status_code)
+                logger.debug(e.response.json())
                 logger.info("Sleeping for %i", self.error_delay)
                 time.sleep(self.error_delay)
                 if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
@@ -118,7 +134,7 @@ class TwitterSearch:
                     self.session.headers.update(headers)
                 elif retry_num == MAX_RETRIES:
                     return None
-                return self.execute_search(url, retry_num + 1)
+                return self.execute_search(url, retry_num + 1, error_num)
 
     @staticmethod
     def parse_tweets(items_html):
@@ -240,7 +256,7 @@ class TwitterSlicer(TwitterSearch):
         self.counter = 0
         self.counter_lock = Lock()
         self.filepath = filepath
-        self.jsonl_files_dicts = {}  # Day dict -> Hour Dict -> File
+        self.jsonl_files_dicts = {}  # Day dict -> List of o -> File
 
     def search(self, query):
         # Specify a user agent to prevent Twitter from returning a profile card
@@ -251,14 +267,15 @@ class TwitterSlicer(TwitterSearch):
         time_until = datetime.datetime.strptime(self.until, "%Y-%m-%d")
 
         n_days = (time_until - time_since).days
-        tp = ThreadPoolExecutor(max_workers=self.n_threads)
+        tp = ThreadPoolExecutor(max_workers=n_days)
         for i in range(0, n_days):
-            since_query = time_since + datetime.timedelta(days=i)
-            until_query = time_since + datetime.timedelta(days=(i + 1))
-            since_date_str = since_query.strftime("%Y-%m-%d")
-            day_query = "%s since:%s until:%s" % (query, since_date_str, until_query.strftime("%Y-%m-%d"))
-            tp.submit(self.perform_search, day_query, since_date_str)
-        tp.shutdown(wait=True)
+            since_date = time_since + datetime.timedelta(days=i)
+            until_date = time_since + datetime.timedelta(days=(i + 1))
+            since_date_str = since_date.strftime("%Y-%m-%d")
+            day_query = "%s since:%s until:%s" % (query, since_date_str, until_date.strftime("%Y-%m-%d"))
+            future = tp.submit(self.perform_search, day_query, since_date_str)
+            # future.add_done_callback(functools.partial(self.close_files, since_date_str))
+        tp.shutdown(wait=False)
 
     def save_tweets(self, tweets, since_date_str):
         """
@@ -275,9 +292,19 @@ class TwitterSlicer(TwitterSearch):
             # Initialize auxiliary data structures, if needed
             if since_date_str not in self.jsonl_files_dicts:
                 self.jsonl_files_dicts[since_date_str] = {}
+                self.jsonl_files_dicts[since_date_str][tweet_hour_str] = {}
+                # Create new file for the first hour
+                filename = '{0}.{1}.{2}.{3}'.format(self.filepath, since_date_str, tweet_hour_str, 'jsonl')
+                self.jsonl_files_dicts[since_date_str][tweet_hour_str] = io.open(filename, 'w', encoding='utf-8')
+
             if tweet_hour_str not in self.jsonl_files_dicts[since_date_str]:
-                # TODO clean previous auxiliary data structures data are not being used
-                filename = self.filepath + '.' + since_date_str + '.' + tweet_hour_str + ' .jsonl'
+                # TODO [Improvement][Performance][Medium] - clean previous aux data structures data are not being used
+                # Close the previous file to free resources
+                previous_hour = str(int(tweet_hour_str)+1)
+                self.jsonl_files_dicts[since_date_str][previous_hour].close()
+                del self.jsonl_files_dicts[since_date_str][previous_hour]
+                # Create new file for the next hour
+                filename = '{0}.{1}.{2}.{3}'.format(self.filepath, since_date_str, tweet_hour_str, 'jsonl')
                 self.jsonl_files_dicts[since_date_str][tweet_hour_str] = io.open(filename, 'w', encoding='utf-8')
 
             file = self.jsonl_files_dicts[since_date_str][tweet_hour_str]
@@ -303,11 +330,14 @@ class TwitterSlicer(TwitterSearch):
             self.counter_lock.release()
         return True
 
+    def close_files(self, since_date_str):
+        for file in self.jsonl_files_dicts[since_date_str].values():
+            file.close()
+
     def close_all_files(self):
         file_day_dicts = self.jsonl_files_dicts
-        for file_hour_dict in file_day_dicts.values():
-            for file in file_hour_dict.values():
-                file.close()
+        for since_date_str in file_day_dicts.keys():
+            self.close_files(since_date_str)
 
 
 def twitter_search(search_terms=None, since=None, until=None, accounts=None, rate_delay=DEFAULT_RATE_DELAY,
@@ -340,7 +370,7 @@ def twitter_search(search_terms=None, since=None, until=None, accounts=None, rat
                                  n_threads)
             logger.info("Search : %s", search_str)
             twit.search(search_str)
-            twit.close_all_files()
+            #  twit.close_all_files() TODO
     else:
         if not path.isdir(output_dir):
             logger.error('Output directory does not exist.')
@@ -359,7 +389,10 @@ def twitter_search(search_terms=None, since=None, until=None, accounts=None, rat
                                  n_threads)
             search_str_from = search_str + " from:" + act
             logger.info("Search : %s", search_str_from)
-            twit.search(search_str_from)
+            try:
+                twit.search(search_str_from)
+            except:
+                logger.error("Unexpected error.")
             twit.close_all_files()
 
 
