@@ -33,7 +33,7 @@ class TwitterSlicer(TwitterSearch):
 
     def search(self, query):
         # Specify a user agent to prevent Twitter from returning a profile card
-        headers = {'user-agent': self.UA.random}
+        headers = {'user-agent': self.UA.chrome}  # TODO remove this to  cause rate limit
         self.session.headers.update(headers)
 
         time_since = datetime.datetime.strptime(self.since, "%Y-%m-%d")
