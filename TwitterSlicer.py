@@ -2,6 +2,7 @@ import io
 import time
 import datetime
 import json
+from fake_useragent import UserAgent
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock  # TODO - Improvement: Don't use locks
 from TwitterSearch import TwitterSearch
@@ -30,10 +31,12 @@ class TwitterSlicer(TwitterSearch):
         self.counter_lock = Lock()
         self.filepath = filepath
         self.jsonl_files_dicts = {}  # Day dict -> List of o -> File
+        self.UA = UserAgent(fallback='Lynx/2.8.5rel.1 libwww-FM/2.14 SSL-MM/1.4.1 GNUTLS/0.8.12',
+                            path=useragent_cache_path)
 
     def search(self, query):
         # Specify a user agent to prevent Twitter from returning a profile card
-        headers = {'user-agent': self.UA.chrome}  # TODO remove this to  cause rate limit
+        headers = {'User-Agent': self.UA.random}
         self.session.headers.update(headers)
 
         time_since = datetime.datetime.strptime(self.since, "%Y-%m-%d")
@@ -46,9 +49,8 @@ class TwitterSlicer(TwitterSearch):
             until_date = time_since + datetime.timedelta(days=(i + 1))
             since_date_str = since_date.strftime("%Y-%m-%d")
             day_query = "%s since:%s until:%s" % (query, since_date_str, until_date.strftime("%Y-%m-%d"))
-            future = tp.submit(self.perform_search, day_query, since_date_str)
-            # future.add_done_callback(functools.partial(self.close_files, since_date_str))
-        tp.shutdown(wait=False)
+            tp.submit(self.perform_search, day_query, since_date_str)
+        tp.shutdown(wait=True)
 
     def save_tweets(self, tweets, since_date_str):
         """

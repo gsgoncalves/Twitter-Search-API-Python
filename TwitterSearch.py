@@ -5,6 +5,7 @@ import re
 import datetime
 import time
 import requests
+from requests import HTTPError
 from abc import ABCMeta, abstractmethod
 from urllib.parse import urlencode
 from urllib.parse import urlunparse
@@ -64,43 +65,46 @@ class TwitterSearch:
                 time.sleep(self.rate_delay)
                 response = self.execute_search(url)
 
-    def execute_search(self, url, retry_num=0, error_num=0):
+    def execute_search(self, url, retry_num=0):
         """
         Executes a search to Twitter for the given URL
         :param url: URL to search twitter with
         :param retry_num: Retry number of current function call
-        :param error_num: HTTP error number of current function call
         :return: A JSON object with data from Twitter
         """
-        response = self.session.get(url)
-        if response.status_code == 200:
+        try:
+            response = self.session.get(url)
             data = response.json()
             return data
-        elif response.status_code == 400:
-            self.logger.debug("HTTP 400 - Bad Request")
-            self.logger.debug(response.json())
-        elif response.status_code == 429:
-            self.logger.debug("HTTP 429 - Too many requests")
-            self.logger.debug(response.headers)
-            reset = int(response.headers['x-rate-limit-reset'])
-            self.logger.debug("Reset time: %s", str(reset))
-            seconds = reset + (error_num + retry_num) * self.error_delay
-            self.logger.debug("Going to sleep for %s seconds.", str(seconds))
-            time.sleep(seconds)
-        else:
-            # If we get a HTTP Error due to a request timing out, we sleep for our error delay, then make
-            # another attempt
-            self.logger.debug(response.status_code)
-            self.logger.debug(response.json())
-            self.logger.info("Sleeping for %i", self.error_delay)
-            time.sleep(self.error_delay)
-            if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
-                headers = {'user-agent': self.UA.chrome}  # TODO change this to random
-                self.session = requests.session()
-                self.session.headers.update(headers)
-            elif retry_num == MAX_RETRIES:
-                return None
-        return self.execute_search(url, retry_num + 1, error_num + 1)
+        except HTTPError as e:
+            print("STATUS CODE: "+str(e.response.status_code))
+            # 400 Bad Request
+            if e.response.status_code == 400:
+                self.logger.debug("HTTP 400 - Bad Request")
+                self.logger.debug(e.response.json())
+                return e.response.json()
+            elif e.response.status_code == 429:
+                self.logger.debug("HTTP 429 - Too many requests")
+                self.logger.debug(e.response.headers)
+                reset = int(e.response.headers['x-rate-limit-reset'])
+                self.logger.debug("Reset time: %s", str(reset))
+                seconds = reset + retry_num * self.error_delay
+                self.logger.debug("Going to sleep for %s seconds.", str(seconds))
+                time.sleep(seconds)
+            else:
+                # If we get a HTTP Error due to a request timing out, we sleep for our error delay, then make
+                # another attempt
+                self.logger.info("Sleeping for %i", self.error_delay)
+                time.sleep(self.error_delay)
+                if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
+                    headers = {'user-agent': self.UA.random}
+                    self.session = requests.session()
+                    self.session.headers.update(headers)
+                elif retry_num == MAX_RETRIES:
+                    return None
+
+                return self.execute_search(url, retry_num + 1)
+
 
     @staticmethod
     def parse_tweets(items_html):
