@@ -193,14 +193,13 @@ class TwitterSearch:
 
                 media_card_type = media_card_container.get("data-card2-name", None)
                 if media_card_type:   # Only care about media. Ignore Tweet Quotes, etc.
-
+                    iframe_container = media_card_container.find("div", class_="js-macaw-cards-iframe-container")
                     if "summary" in media_card_type:  # Expanded URL w/ image
-                        iframe_container = media_card_container.find("div", class_="js-macaw-cards-iframe-container")
                         tweet['expanded_url_card'] = "https://twitter.com" + iframe_container['data-src']
-                        tweet['expanded_url'] = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
+                        tweet['expanded_url'] = iframe_container['data-card-url']
 
                     if "player" in media_card_type:  # Embedded video
-                        tweet['video-url'] = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
+                        tweet['video-url'] = iframe_container['data-card-url']
 
                     # else: it's some other element that we do not care (e.g. a poll)
 
