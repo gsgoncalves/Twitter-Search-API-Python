@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import re
 import io
 import sys
 import argparse
@@ -163,6 +164,10 @@ class TwitterSearch:
             # Tweet Text
             text_p = li.find("p", class_="tweet-text")
             if text_p is not None:
+                for a in text_p.find_all('a'):
+                    a_text = a.text
+                    if re.match("^https?://|^pic.twitter.com", a_text):
+                        a.replace_with(" %s" % a_text)
                 tweet['text'] = text_p.get_text()
 
             # Tweet User ID, User Screen Name, User Name
@@ -205,7 +210,7 @@ class TwitterSearch:
                 tweet['epoch'] = int(date_span['data-time'])
 
             if tweet['epoch'] is not None:
-                t = datetime.datetime.fromtimestamp((tweet['epoch']))
+                t = datetime.datetime.utcfromtimestamp((tweet['epoch']))
                 tweet['created_at'] = t.strftime(DATE_FORMAT)
 
             # Tweet Retweets
