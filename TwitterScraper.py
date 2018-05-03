@@ -426,21 +426,22 @@ def twitter_search(search_terms=None, since=None, until=None, language=None, acc
             logger.info("Search : %s", search_str)
             twit.search(search_str, target_type=target_type, user_stats=user_stats, language=language)
     else:
-        if not path.isdir(output_dir):
+        if not path.isdir(output_dir) and not output_file:
             logger.error('Output directory does not exist.')
             sys.exit(1)
 
         for act in accounts:
             if output_file:
-                filepath = path.join(output_dir, output_file)
+                filepath = output_file
             else:
                 filepath = path.join(output_dir, act + '.jsonl')
-            try:
-                if path.getsize(filepath) > 0:
-                    logger.debug('%s : File already has content.', filepath)
-                    continue
-            except OSError:
-                pass
+                # do not overwrite existing files in output directory
+                try:
+                    if path.getsize(filepath) > 0:
+                        logger.debug('%s : File already has content.', filepath)
+                        continue
+                except OSError:
+                    pass
 
             twit = TwitterSearchImpl(session, rate_delay, error_delay,
                                      limit, filepath, useragent_cache_path=useragent_cache_path)
