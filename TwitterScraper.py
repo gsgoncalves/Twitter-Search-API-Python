@@ -136,7 +136,7 @@ class TwitterSearch:
         :param items_html: The HTML block with tweets
         :return: A JSON list of tweets
         """
-        soup = BeautifulSoup(items_html, "html.parser")
+        soup = BeautifulSoup(items_html, "lxml")
         tweets = []
         for li in soup.find_all("li", class_='js-stream-item'):
 
@@ -173,31 +173,43 @@ class TwitterSearch:
                 tweet['user']['screen_name'] = user_details_div['data-screen-name']
                 tweet['user']['name'] = user_details_div['data-name']
 
+            # to allow for early termination
+            has_media = False
+
             # Twitter image
             image_field = li.find("div", class_="AdaptiveMedia-photoContainer")
-            if image_field:
+            if image_field is not None:
                 tweet['image-url'] = image_field['data-image-url']
+                has_media = True
 
-            # Twitter video
-            twitter_video_field = li.find("div", class_="AdaptiveMedia-videoContainer")
-            if twitter_video_field:
-                tweet['video-url'] = "https://twitter.com/i/videos/tweet/%s" % tweet["id_str"]
+            if not has_media:
+                # Twitter video
+                twitter_video_field = li.find("div", class_="AdaptiveMedia-videoContainer")
+                if twitter_video_field is not None:
+                    tweet['video-url'] = "https://twitter.com/i/videos/tweet/%s" % tweet["id_str"]
+                    has_media = True
 
-            media_card_container = li.find("div", class_="js-media-container")
-            if (twitter_video_field is None) and (image_field is None) and media_card_container:
+            if not has_media:
 
-                media_card_type = media_card_container.get("data-card2-name", None)
-                if media_card_type:   # Only care about media. Ignore Tweet Quotes, etc.
+                media_card_container = li.find("div", class_="js-media-container")
+                if media_card_container is not None:
 
-                    if "summary" in media_card_type:  # Expanded URL w/ image
-                        iframe_container = media_card_container.find("div", class_="js-macaw-cards-iframe-container")
-                        tweet['expanded_url_card'] = "https://twitter.com" + iframe_container['data-src']
-                        tweet['expanded_url'] = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
+                    media_card_type = media_card_container.get("data-card2-name", None)
+                    if media_card_type is not None:   # Only care about media. Ignore Tweet Quotes, etc.
 
-                    if "player" in media_card_type:  # Embedded video
-                        tweet['video-url'] = li.find("a", class_="twitter-timeline-link")['data-expanded-url']
+                        if "summary" in media_card_type:  # Expanded URL w/ image
+                            iframe_container = media_card_container.find("div", class_="js-macaw-cards-iframe-container")
+                            tweet['expanded_url_card'] = "https://twitter.com" + iframe_container['data-src']
+                            timeline_link = text_p.find("a", class_="twitter-timeline-link")
+                            if timeline_link is not None:
+                                tweet['expanded_url'] = timeline_link['data-expanded-url']
 
-                    # else: it's some other element that we do not care (e.g. a poll)
+                        elif "player" in media_card_type:  # Embedded video
+                            timeline_link = text_p.find("a", class_="twitter-timeline-link")
+                            if timeline_link is not None:
+                                tweet['video-url'] = timeline_link['data-expanded-url']
+
+                        # else: it's some other element that we do not care (e.g. a poll)
 
             # Tweet date
             date_span = li.find("span", class_="_timestamp")
@@ -230,7 +242,7 @@ class TwitterSearch:
         :param items_html: The HTML block with items
         :return: A JSON list of items
         """
-        soup = BeautifulSoup(items_html, "html.parser")
+        soup = BeautifulSoup(items_html, "lxml")
         items = []
         for div in soup.find_all("div", class_='js-stream-item'):
 
