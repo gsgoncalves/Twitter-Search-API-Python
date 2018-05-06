@@ -8,7 +8,7 @@ import requests
 from requests.exceptions import HTTPError
 import six
 import json
-import datetime
+from datetime import datetime
 from os import path
 from abc import ABCMeta, abstractmethod
 
@@ -121,8 +121,7 @@ class TwitterSearch:
                 logger.info("Sleeping for %i", self.error_delay)
                 sleep(self.error_delay)
                 if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
-                    headers = {'user-agent': self.UA.random}
-                    self.session = requests.session()
+                    headers = {'User-Agent': self.UA.random}
                     self.session.headers.update(headers)
                 elif retry_num == MAX_RETRIES:
                     return None
@@ -136,103 +135,88 @@ class TwitterSearch:
         :param items_html: The HTML block with tweets
         :return: A JSON list of tweets
         """
-        soup = BeautifulSoup(items_html, "lxml")
-        tweets = []
-        for li in soup.find_all("li", class_='js-stream-item'):
+        soup = BeautifulSoup(items_html, 'lxml')
 
-            # If our li doesn't have a tweet-id, we skip it as it's not going to be a tweet.
-            if 'data-item-id' not in li.attrs:
+        comma = ','
+        dot = '.'
+        tweets = []
+        for tweet in soup.find_all(class_='stream-item'):
+            if 'data-item-id' not in tweet.attrs:
                 continue
 
-            tweet = {
-                'text': None,
-                'id_str': li['data-item-id'],
-                'id': int(li['data-item-id']),
-                'epoch': None,
-                'created_at': None,
-                'retweet_count': 0,
-                'favorite_count': 0,
-                'user': {
-                    'id': None,
-                    'id_str': None,
-                    'screen_name': None,
-                    'name': None,
-                },
-            }
+            id_str = tweet.attrs['data-item-id']
+            id = int(id_str)
 
-            # Tweet Text
-            text_p = li.find("p", class_="tweet-text")
-            if text_p is not None:
-                tweet['text'] = text_p.get_text()
+            timestamp = int(tweet.find(class_="_timestamp").attrs['data-time'])
+            created_at = datetime.utcfromtimestamp(timestamp).strftime(DATE_FORMAT)
 
-            # Tweet User ID, User Screen Name, User Name
-            user_details_div = li.find("div", class_="tweet")
-            if user_details_div is not None:
-                tweet['user']['id_str'] = user_details_div['data-user-id']
-                tweet['user']['id'] = int(user_details_div['data-user-id'])
-                tweet['user']['screen_name'] = user_details_div['data-screen-name']
-                tweet['user']['name'] = user_details_div['data-name']
+            tweet_text = tweet.find(class_="tweet-text")
+            if tweet_text is None:
+                continue
 
-            # to allow for early termination
-            has_media = False
+            tweet_div = tweet.find(class_="tweet")
+            user = {}
+            user['id_str'] = tweet_div.attrs['data-user-id']
+            user['id'] = int(tweet_div.attrs['data-user-id'])
+            user['screen_name'] = tweet_div.attrs['data-screen-name']
+            user['name'] = tweet_div.attrs['data-name']
 
-            # Twitter image
-            image_field = li.find("div", class_="AdaptiveMedia-photoContainer")
-            if image_field is not None:
-                tweet['image-url'] = image_field['data-image-url']
-                has_media = True
+            interactions = [x.get_text() for x in tweet.find_all(class_='ProfileTweet-actionCount')]
+            replies = int(interactions[0].split(" ")[0].replace(comma, "").replace(dot, ""))
+            retweets = int(interactions[1].split(" ")[
+                               0].replace(comma, "").replace(dot, ""))
+            likes = int(interactions[2].split(" ")[0].replace(comma, "").replace(dot, ""))
+            hashtags = [hashtag_node.get_text() for hashtag_node in tweet.find_all(class_='twitter-hashtag')]
+            urls = [url_node.attrs['data-expanded-url'] for url_node in
+                    tweet.find_all('a', class_='twitter-timeline-link') if 'data-expanded-url' in url_node.attrs]
+            photos = [photo_node.attrs['data-image-url'] for photo_node in tweet.find_all(class_='AdaptiveMedia-photoContainer')]
 
-            if not has_media:
-                # Twitter video
-                twitter_video_field = li.find("div", class_="AdaptiveMedia-videoContainer")
-                if twitter_video_field is not None:
-                    tweet['video-url'] = "https://twitter.com/i/videos/tweet/%s" % tweet["id_str"]
-                    has_media = True
+            videos = []
+            video_nodes = tweet.find_all(class_='PlayableMedia-player')
+            for node in video_nodes:
+                videos.append({
+                    'expanded_url': 'https://twitter.com/i/videos/tweet/%s' % id_str
+                })
 
-            if not has_media:
+            cards = []
+            card_nodes = tweet.find_all(class_='card2')
+            for node in card_nodes:
+                card_type = node.get('data-card2-name', None)
+                if card_type is not None:  # Only care about media. Ignore Tweet Quotes, etc.
+                    if 'summary' in card_type:  # Expanded URL w/ image
+                        iframe_container = node.find(class_='js-macaw-cards-iframe-container')
+                        timeline_link = tweet_text.find('a', class_='twitter-timeline-link')
+                        cards.append({
+                            'card_url': 'https://twitter.com' + iframe_container.attrs['data-src'],
+                            'expanded_url': timeline_link['data-expanded-url']
+                        })
+                    elif 'player' in card_type:  # Embedded video
+                        timeline_link = tweet_text.find('a', class_='twitter-timeline-link')
+                        videos.append({
+                            'expanded_url': timeline_link['data-expanded-url']
+                        })
 
-                media_card_container = li.find("div", class_="js-media-container")
-                if media_card_container is not None:
+            # remove u-hidden links, etc
+            for hidden_child in tweet_text.find_all(class_='u-hidden'):
+                hidden_child.decompose()
+            text = tweet_text.get_text()
 
-                    media_card_type = media_card_container.get("data-card2-name", None)
-                    if media_card_type is not None:   # Only care about media. Ignore Tweet Quotes, etc.
-
-                        if "summary" in media_card_type:  # Expanded URL w/ image
-                            iframe_container = media_card_container.find("div", class_="js-macaw-cards-iframe-container")
-                            tweet['expanded_url_card'] = "https://twitter.com" + iframe_container['data-src']
-                            timeline_link = text_p.find("a", class_="twitter-timeline-link")
-                            if timeline_link is not None:
-                                tweet['expanded_url'] = timeline_link['data-expanded-url']
-
-                        elif "player" in media_card_type:  # Embedded video
-                            timeline_link = text_p.find("a", class_="twitter-timeline-link")
-                            if timeline_link is not None:
-                                tweet['video-url'] = timeline_link['data-expanded-url']
-
-                        # else: it's some other element that we do not care (e.g. a poll)
-
-            # Tweet date
-            date_span = li.find("span", class_="_timestamp")
-            if date_span is not None:
-                tweet['epoch'] = int(date_span['data-time'])
-
-            if tweet['epoch'] is not None:
-                t = datetime.datetime.utcfromtimestamp((tweet['epoch']))
-                tweet['created_at'] = t.strftime(DATE_FORMAT)
-
-            # Tweet Retweets
-            retweet_span = li.select("span.ProfileTweet-action--retweet > span.ProfileTweet-actionCount")
-            if retweet_span is not None and len(retweet_span) > 0:
-                tweet['retweet_count'] = int(retweet_span[0]['data-tweet-stat-count'])
-                tweet['retweeted'] = tweet['retweet_count'] > 0
-
-            # Tweet Favourites
-            favorite_span = li.select("span.ProfileTweet-action--favorite > span.ProfileTweet-actionCount")
-            if favorite_span is not None and len(favorite_span) > 0:
-                tweet['favorite_count'] = int(favorite_span[0]['data-tweet-stat-count'])
-                tweet['favorited'] = tweet['favorite_count'] > 0
-
-            tweets.append(tweet)
+            tweets.append({
+                'created_at': created_at,
+                'text': text,
+                'id': id,
+                'id_str': id_str,
+                'epoch': timestamp,
+                'reply_count': replies,
+                'retweet_count': retweets,
+                'favorite_count': likes,
+                'hashtags': hashtags,
+                'cards': cards,
+                'urls': urls,
+                'photos': photos,
+                'videos': videos,
+                'user': user,
+            })
         return tweets
 
     @staticmethod
@@ -242,7 +226,7 @@ class TwitterSearch:
         :param items_html: The HTML block with items
         :return: A JSON list of items
         """
-        soup = BeautifulSoup(items_html, "lxml")
+        soup = BeautifulSoup(items_html, 'lxml')
         items = []
         for div in soup.find_all("div", class_='js-stream-item'):
 
@@ -287,11 +271,16 @@ class TwitterSearch:
         :return: A string URL
         """
         params = {
-            # Type Param
             'f': target_type,
-            # Query Param
+            'vertical': 'default',
+            'include_available_features': 1,
+            'include_entities': 1,
+            'include_new_items_bar': 'true',
+            'reset_error_state': 'false',
+            'src': 'typd',
+            'max_position': max_position,
             'q': query,
-            'max_position': max_position
+            'l': language
         }
 
         if language:
@@ -310,11 +299,15 @@ class TwitterSearch:
         :return: A string URL
         """
         params = {
-            # Type Param
             'f': target_type,
-            # Query Param
+            'vertical': 'default',
             'q': query,
-            'max_position': max_position
+            'src': 'typd',
+            'include_available_features': 1,
+            'include_entities': 1,
+            'max_position': max_position,
+            'reset_error_state': 'false',
+            'include_new_items_bar': 'true',
         }
 
         url_tupple = ('https', 'twitter.com', '/i/search/timeline', '', urlencode(params), '')
@@ -365,7 +358,13 @@ class TwitterSearchImpl(TwitterSearch):
 
     def search(self, query, target_type, **kwargs):
         # Specify a user agent to prevent Twitter from returning a profile card
-        headers = {'user-agent': self.UA.random}
+        headers = {
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Referer': 'https://twitter.com/search',
+            'User-Agent': self.UA.random,
+            'X-Twitter-Active-User': 'yes',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
         self.session.headers.update(headers)
 
         self.jsonl_file = io.open(self.filepath, 'w', encoding='utf-8')
