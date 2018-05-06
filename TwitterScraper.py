@@ -38,7 +38,7 @@ TWITTER_REST_API_ACCESS_TOKEN_SECRET = ""
 
 DEFAULT_RATE_DELAY = 0
 DEFAULT_ERROR_DELAY = 5
-DEFAULT_LIMIT = 50000
+DEFAULT_LIMIT = None
 MAX_RETRIES_SESSION = 5
 MAX_RETRIES = MAX_RETRIES_SESSION*5
 PROGRESS_PER = 100
@@ -118,7 +118,7 @@ class TwitterSearch:
             if e.response.status_code == 400:
                 return response.json()
             else:
-                logger.info("Sleeping for %i", self.error_delay)
+                logger.error("Sleeping for %i", self.error_delay)
                 sleep(self.error_delay)
                 if retry_num % MAX_RETRIES_SESSION == 0 and retry_num > 0:
                     headers = {'User-Agent': self.UA.random}
@@ -401,7 +401,7 @@ class TwitterSearchImpl(TwitterSearch):
                 logger.info("%s : %i items saved to file.", self.filepath, self.counter)
 
             # When we've reached our max limit, return False so collection stops
-            if self.counter >= self.max_items:
+            if self.max_items is not None and self.counter >= self.max_items:
                 return False
 
         return True
@@ -454,7 +454,7 @@ def twitter_search(search_terms=None, since=None, until=None, language=None, acc
                 # do not overwrite existing files in output directory
                 try:
                     if path.getsize(filepath) > 0:
-                        logger.debug('%s : File already has content.', filepath)
+                        logger.error('%s : File already has content.', filepath)
                         continue
                 except OSError:
                     pass
