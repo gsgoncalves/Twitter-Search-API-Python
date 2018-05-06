@@ -147,19 +147,20 @@ class TwitterSearch:
             id_str = tweet.attrs['data-item-id']
             id = int(id_str)
 
-            timestamp = int(tweet.find(class_="_timestamp").attrs['data-time'])
-            created_at = datetime.utcfromtimestamp(timestamp).strftime(DATE_FORMAT)
-
             tweet_text = tweet.find(class_="tweet-text")
             if tweet_text is None:
                 continue
 
+            timestamp = int(tweet.find(class_="_timestamp").attrs['data-time'])
+            created_at = datetime.utcfromtimestamp(timestamp).strftime(DATE_FORMAT)
+
             tweet_div = tweet.find(class_="tweet")
-            user = {}
-            user['id_str'] = tweet_div.attrs['data-user-id']
-            user['id'] = int(tweet_div.attrs['data-user-id'])
-            user['screen_name'] = tweet_div.attrs['data-screen-name']
-            user['name'] = tweet_div.attrs['data-name']
+            user = {
+                'id_str': tweet_div.attrs['data-user-id'],
+                'id': int(tweet_div.attrs['data-user-id']),
+                'screen_name': tweet_div.attrs['data-screen-name'],
+                'name': tweet_div.attrs['data-name'],
+            }
 
             interactions = [x.get_text() for x in tweet.find_all(class_='ProfileTweet-actionCount')]
             replies = int(interactions[0].split(" ")[0].replace(comma, "").replace(dot, ""))
@@ -167,13 +168,16 @@ class TwitterSearch:
                                0].replace(comma, "").replace(dot, ""))
             likes = int(interactions[2].split(" ")[0].replace(comma, "").replace(dot, ""))
             hashtags = [hashtag_node.get_text() for hashtag_node in tweet.find_all(class_='twitter-hashtag')]
-            urls = [url_node.attrs['data-expanded-url'] for url_node in
-                    tweet.find_all('a', class_='twitter-timeline-link') if 'data-expanded-url' in url_node.attrs]
-            photos = [photo_node.attrs['data-image-url'] for photo_node in tweet.find_all(class_='AdaptiveMedia-photoContainer')]
+            urls = [url_node.attrs['data-expanded-url']
+                    for url_node in tweet.find_all('a', class_='twitter-timeline-link')
+                    if 'data-expanded-url' in url_node.attrs]
+            photos = [photo_node.attrs['data-image-url']
+                      for photo_node in tweet.find_all(class_='AdaptiveMedia-photoContainer')
+                      if 'data-image-url' in photo_node.attrs]
 
             videos = []
-            video_nodes = tweet.find_all(class_='PlayableMedia-player')
-            for node in video_nodes:
+            native_video_node = tweet.find(class_='PlayableMedia-player')
+            if native_video_node is not None:
                 videos.append({
                     'expanded_url': 'https://twitter.com/i/videos/tweet/%s' % id_str
                 })
@@ -185,16 +189,23 @@ class TwitterSearch:
                 if card_type is not None:  # Only care about media. Ignore Tweet Quotes, etc.
                     if 'summary' in card_type:  # Expanded URL w/ image
                         iframe_container = node.find(class_='js-macaw-cards-iframe-container')
-                        timeline_link = tweet_text.find('a', class_='twitter-timeline-link')
-                        cards.append({
-                            'card_url': 'https://twitter.com' + iframe_container.attrs['data-src'],
-                            'expanded_url': timeline_link['data-expanded-url']
-                        })
+                        if iframe_container is not None:
+                            timeline_link = tweet_text.find('a', class_='twitter-timeline-link')
+                            if timeline_link is not None and 'data-expanded-url' in timeline_link.attrs:
+                                cards.append({
+                                    'card_url': 'https://twitter.com' + iframe_container.attrs['data-src'],
+                                    'expanded_url': timeline_link.attrs['data-expanded-url']
+                                })
+                            else:
+                                logger.error("BAD CARD: %s", id_str)
                     elif 'player' in card_type:  # Embedded video
                         timeline_link = tweet_text.find('a', class_='twitter-timeline-link')
-                        videos.append({
-                            'expanded_url': timeline_link['data-expanded-url']
-                        })
+                        if timeline_link is not None and 'data-expanded-url' in timeline_link.attrs:
+                            videos.append({
+                                'expanded_url': timeline_link.attrs['data-expanded-url']
+                            })
+                        else:
+                            logger.error("BAD CARD: %s", id_str)
 
             # remove u-hidden links, etc
             for hidden_child in tweet_text.find_all(class_='u-hidden'):
@@ -280,7 +291,6 @@ class TwitterSearch:
             'src': 'typd',
             'max_position': max_position,
             'q': query,
-            'l': language
         }
 
         if language:
