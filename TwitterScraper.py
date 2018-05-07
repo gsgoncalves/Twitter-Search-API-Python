@@ -95,7 +95,19 @@ class TwitterSearch:
         except HTTPError as e:
             # 400 Bad Request
             if e.response.status_code == 400:
+                logger.debug("HTTP 400 - Bad request")
                 return data
+            elif e.response.status_code == 429:
+                now_ts = datetime.datetime.utcnow().timestamp()
+                self.logger.debug("HTTP 429 - Too many requests")
+                self.logger.debug(response.headers)
+                utc_reset_ts = int(response.headers['x-rate-limit-reset'])
+                reset = utc_reset_ts - now_ts
+                logger.debug("Reset time: %s", str(reset))
+                # Multiply by small delay for paranoid reasons.
+                seconds = reset * self.error_delay
+                logger.debug("Going to sleep for %s seconds.", str(seconds))
+                sleep(seconds)
             else:
                 logger.error(e.message)
                 logger.info("Sleeping for %i", self.error_delay)
