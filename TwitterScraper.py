@@ -18,9 +18,10 @@ except ImportError:
     from urllib import urlencode
     from urlparse import urlunparse
 from bs4 import BeautifulSoup
-from time import sleep
+from time import sleep, time, mktime
 import logging
 from fake_useragent import UserAgent
+import email
 
 __author__ = 'Tom Dickinson, Flavio Martins'
 
@@ -99,9 +100,9 @@ class TwitterSearch:
                 return data
             elif e.response.status_code == 429:
                 now_ts = datetime.datetime.utcnow().timestamp()
-                self.logger.debug("HTTP 429 - Too many requests")
-                self.logger.debug(response.headers)
-                utc_reset_ts = int(response.headers['x-rate-limit-reset'])
+                logger.debug("HTTP 429 - Too many requests")
+                logger.debug(e.response.headers)
+                utc_reset_ts = int(e.response.headers['x-rate-limit-reset'])
                 reset = utc_reset_ts - now_ts
                 logger.debug("Reset time: %s", str(reset))
                 # Multiply by small delay for paranoid reasons.
@@ -109,9 +110,23 @@ class TwitterSearch:
                 logger.debug("Going to sleep for %s seconds.", str(seconds))
                 sleep(seconds)
             else:
-                logger.error(e.message)
-                logger.info("Sleeping for %i", self.error_delay)
-                sleep(self.error_delay)
+                retry_after = e.response.headers['retry-after']
+                reset_seconds = 1
+
+                if retry_after is not None:
+                    if re.match("([0-9])+", retry_after):
+                        reset_seconds = int(retry_after)
+                    else:
+                        retry_after_tuple = email.utils.parsedate(retry_after)
+                        if retry_after_tuple is None:
+                            logger.error("Invalid Retry-After header: %s" % retry_after)
+                        retry_date = mktime(retry_after_tuple)
+                        reset_seconds = retry_date - time()
+
+                logger.error(e.response.message)
+                total_sleep = reset_seconds * self.error_delay
+                logger.info("Sleeping for %i", total_sleep)
+                sleep(total_sleep)
                 return self.execute_search(url)
 
     @staticmethod
